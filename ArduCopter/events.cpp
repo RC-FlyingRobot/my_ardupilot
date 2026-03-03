@@ -21,6 +21,8 @@ void Copter::failsafe_radio_on_event()
     arming.disarm(AP_Arming::Method::RADIOFAILSAFE);
     return;
 
+    // memo
+
     // set desired action based on FS_THR_ENABLE parameter
     FailsafeAction desired_action;
     switch (g.failsafe_throttle) {
