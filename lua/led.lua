@@ -2,7 +2,7 @@
 local MOTOR_FAIL_CH  = 6   -- 【優先度1】耐故障（モーター停止）テスト用スイッチ
 local FIGURE_8_CH    = 7   -- 【優先度2】8の字飛行スイッチ
 
-local LED_SERVO_CH   = 4   -- LEDが繋がっているPWM出力ピン
+local LED_SERVO_CH   = 5   -- LEDが繋がっているPWM出力ピン
 local NUM_LEDS       = 16   -- 繋がっているLEDの数
 
 -- LEDの初期化
