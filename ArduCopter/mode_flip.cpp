@@ -22,7 +22,7 @@
 
 #define FLIP_THR_INC            0.20f           // throttle increase during FlipState::Start stage (under 45deg lean angle)
 #define FLIP_THR_DEC            0.24f           // throttle decrease during FlipState::Roll stage (between 45deg ~ -90deg roll)
-#define FLIP_ROTATION_RATE_RADS radians(400.0)  // rotation rate request in radians / sec (i.e. 400 deg/sec)
+#define FLIP_ROTATION_RATE_RADS radians(600.0)  // rotation rate request in radians / sec (i.e. 400 deg/sec)
 #define FLIP_TIMEOUT_MS         2500            // timeout after 2.5sec.  Vehicle will switch back to original flight mode
 #define FLIP_RECOVERY_ANGLE_RAD radians(5.0)    // consider successful recovery when roll is back within 5 degrees of original
 

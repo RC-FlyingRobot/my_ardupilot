@@ -2,7 +2,7 @@
 
 -- 飛行中にプロポのスイッチで8の字(長方形ベース)を実行するスクリプト
 
-local rc_channel = 7             -- トリガーとなるプロポのチャンネル
+local rc_channel = 5             -- トリガーとなるプロポのチャンネル
 local pwm_threshold = 1700       -- スイッチONと判定するPWM値
 local fwd_dist = 6.0             -- 前後方向の移動距離 (m)
 local side_dist = 9.0            -- 左右方向の移動距離 (m), ポール(7m)を越える設定
