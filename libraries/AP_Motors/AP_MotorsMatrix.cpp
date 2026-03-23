@@ -413,6 +413,21 @@ void AP_MotorsMatrix::output_armed_stabilizing()
 //   sets _motor_lost_index to index of failed motor
 void AP_MotorsMatrix::check_for_failed_motor(float throttle_thrust_best_plus_adj)
 {
+    // RCチャンネル6 (0-indexedで5) をプロポのトリガースイッチとして使用
+    RC_Channel *rc_switch = rc().channel(5); 
+    
+    // PWM値が1700以上の場合にスイッチONと判定
+    bool is_rc_triggered_failure = (rc_switch!= nullptr && rc_switch->get_radio_in() > 1700);
+
+    if (is_rc_triggered_failure) {
+        // 意図的に停止させるモーターのインデックスを強制指定（例：モーター1）
+        _motor_lost_index = 0; 
+        thrust_balanced = false; // 推力バランスが崩れたことをシステムに通知
+        
+        // 故障が確定したため、従来のフィルタリングベースの検出処理をスキップしてリターン
+        return; 
+    }
+
     // record filtered and scaled thrust output for motor loss monitoring purposes
     float alpha = _dt_s / (_dt_s + 0.5f);
     for (uint8_t i = 0; i < AP_MOTORS_MAX_NUM_MOTORS; i++) {
