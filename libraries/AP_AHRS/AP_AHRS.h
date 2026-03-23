@@ -641,7 +641,7 @@ public:
     // in result, x is forward, y is right
     Vector2f earth_to_body2D(const Vector2f &ef_vector) const;
 
-    // rotate a 2D vector from earth frame to body frame
+    // rotate a 2D vector from body frame to earth frame
     // in input, x is forward, y is right
     Vector2f body_to_earth2D(const Vector2f &bf) const WARN_IF_UNUSED;
     Vector2p body_to_earth2D_p(const Vector2p &bf) const WARN_IF_UNUSED;
@@ -810,7 +810,7 @@ private:
     void update_EKF3(void);
 #endif
 
-    const uint16_t startup_delay_ms = 1000;
+    static constexpr uint16_t startup_delay_ms = 1000;
     uint32_t start_time_ms;
     uint8_t _ekf_flags; // bitmask from Flags enumeration
 

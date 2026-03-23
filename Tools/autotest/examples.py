@@ -5,11 +5,12 @@ AP_FLAKE8_CLEAN
 """
 
 import os
-import pexpect
 import signal
 import subprocess
 import time
 import traceback
+
+import pexpect
 
 from pysim import util
 
@@ -130,7 +131,7 @@ def run_examples(debug=False, valgrind=False, gdb=False):
             continue
         try:
             run_example(afile, filepath, valgrind=valgrind, gdb=gdb)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print("Example failed with exception")
             print_exception_stacktrace(e)
             failures.append(afile)

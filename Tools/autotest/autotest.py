@@ -7,8 +7,8 @@ Andrew Tridgell, October 2011
  AP_FLAKE8_CLEAN
 """
 import atexit
-import fnmatch
 import copy
+import fnmatch
 import glob
 import optparse
 import os
@@ -20,21 +20,21 @@ import sys
 import time
 import traceback
 
-import blimp
-import rover
+from pymavlink.generator import mavtemplate
+
+import antennatracker
 import arducopter
 import arduplane
 import ardusub
-import antennatracker
-import quadplane
 import balancebot
-import sailboat
-import helicopter
-
+import blimp
 import examples
-from pysim import util
-from pymavlink.generator import mavtemplate
+import helicopter
+import quadplane
+import rover
+import sailboat
 
+from pysim import util
 from vehicle_test_suite import Test
 
 tester = None
@@ -99,7 +99,7 @@ def build_examples(**kwargs):
         print("Running build.examples for %s" % target)
         try:
             util.build_examples(target, **kwargs)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print("Failed build_examples on board=%s" % target)
             print(str(e))
             return False
@@ -113,7 +113,7 @@ def build_unit_tests(**kwargs):
         print("Running build.unit_tests for %s" % target)
         try:
             util.build_tests(target, **kwargs)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             print("Failed build.unit_tests on board=%s" % target)
             print(str(e))
             return False
@@ -249,7 +249,7 @@ def alarm_handler(signum, frame):
         convert_gpx()
         write_fullresults()
         os.killpg(0, signal.SIGKILL)
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
     sys.exit(1)
 
@@ -297,7 +297,7 @@ def binary_path(step, debug=False):
     """Get vehicle binary path."""
     try:
         vehicle = step.split(".")[1]
-    except Exception:
+    except IndexError:
         return None
 
     if vehicle not in __bin_names:
@@ -751,7 +751,7 @@ def run_tests(steps):
                     failed_testinstances[step].append(testinstance)
                 results.add(step, '<span class="failed-text">FAILED</span>',
                             time.time() - t1)
-        except Exception as msg:
+        except Exception as msg:  # noqa: BLE001
             passed = False
             failed.append(step)
             print(">>>> FAILED STEP: %s at %s (%s)" %
@@ -1074,12 +1074,8 @@ if __name__ == "__main__":
     if opts.move_logs_on_test_failure is None:
         opts.move_logs_on_test_failure = opts.autotest_server
 
-        # temporarily default it to the old behaviour, but allow a
-        # user to test it by setting an environment variable:
-        if os.getenv("AP_AUTOTEST_MOVE_LOGS_ON_FAILURE") is not None:
-            opts.move_logs_on_test_failure = os.getenv("AP_AUTOTEST_MOVE_LOGS_ON_FAILURE") == "1"
-        else:
-            opts.move_logs_on_test_failure = True
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        opts.move_logs_on_test_failure = True
 
     steps = [
         'prerequisites',
