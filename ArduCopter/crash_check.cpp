@@ -8,9 +8,10 @@
 #define CRASH_CHECK_ACCEL_MAX           3.0f    // vehicle must be accelerating less than 3m/s/s to be considered crashed
 
 // Code to detect a thrust loss main ArduCopter code
-#define THRUST_LOSS_CHECK_TRIGGER_SEC         1             // 1 second descent while level and high throttle indicates thrust loss
+#define THRUST_LOSS_CHECK_TRIGGER_SEC         0.3f          // 0.3 seconds descent while level and high throttle indicates thrust loss
 #define THRUST_LOSS_CHECK_ANGLE_DEVIATION_RAD radians(15.0) // we can't expect to maintain altitude beyond 15 degrees on all aircraft
 #define THRUST_LOSS_CHECK_MINIMUM_THROTTLE    0.9f          // we can expect to maintain altitude above 90 % throttle
+#define THRUST_LOSS_MIN_DESCENT_RATE_MS       0.3f          // ignore small descent from control transients or estimator noise
 
 // Yaw imbalance check
 #define YAW_IMBALANCE_IMAX_THRESHOLD 0.75f
@@ -142,10 +143,11 @@ void Copter::thrust_loss_check()
         return;
     }
 
-    // check for descent
+    // check for meaningful descent
     float vel_d_ms = 0;
-    if (!AP::ahrs().get_velocity_D(vel_d_ms, vibration_check.high_vibes) || !is_positive(vel_d_ms)) {
-        // we have no vertical velocity estimate and/or we are not descending
+    if (!AP::ahrs().get_velocity_D(vel_d_ms, vibration_check.high_vibes) ||
+        vel_d_ms < THRUST_LOSS_MIN_DESCENT_RATE_MS) {
+        // we have no vertical velocity estimate and/or the descent is too small
         thrust_loss_counter = 0;
         return;
     }
@@ -161,7 +163,7 @@ void Copter::thrust_loss_check()
     // we may have lost thrust
     thrust_loss_counter++;
 
-    // check if thrust loss for 1 second
+    // check if thrust loss persists long enough
     if (thrust_loss_counter >= (THRUST_LOSS_CHECK_TRIGGER_SEC * scheduler.get_loop_rate_hz())) {
         // reset counter
         thrust_loss_counter = 0;
