@@ -106,37 +106,9 @@ void GCS_MAVLINK_Copter::send_attitude_target()
         thrust);                // Collective thrust, normalized to 0 .. 1
 }
 
-void GCS_MAVLINK_Copter::send_position_target_global_int()
+bool GCS_MAVLINK_Copter::get_target_location(Location &target) const
 {
-    Location target;
-    if (!copter.flightmode->get_wp(target)) {
-        return;
-    }
-
-    // convert altitude frame to AMSL (this may use the terrain database)
-    if (!target.change_alt_frame(Location::AltFrame::ABSOLUTE)) {
-        return;
-    }
-    static constexpr uint16_t POSITION_TARGET_TYPEMASK_LAST_BYTE = 0xF000;
-    static constexpr uint16_t TYPE_MASK = POSITION_TARGET_TYPEMASK_VX_IGNORE | POSITION_TARGET_TYPEMASK_VY_IGNORE | POSITION_TARGET_TYPEMASK_VZ_IGNORE |
-                                          POSITION_TARGET_TYPEMASK_AX_IGNORE | POSITION_TARGET_TYPEMASK_AY_IGNORE | POSITION_TARGET_TYPEMASK_AZ_IGNORE |
-                                          POSITION_TARGET_TYPEMASK_YAW_IGNORE | POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE | POSITION_TARGET_TYPEMASK_LAST_BYTE;
-    mavlink_msg_position_target_global_int_send(
-        chan,
-        AP_HAL::millis(), // time_boot_ms
-        MAV_FRAME_GLOBAL, // targets are always global altitude
-        TYPE_MASK, // ignore everything except the x/y/z components
-        target.lat, // latitude as 1e7
-        target.lng, // longitude as 1e7
-        target.alt * 0.01f, // altitude is sent as a float
-        0.0f, // vx
-        0.0f, // vy
-        0.0f, // vz
-        0.0f, // afx
-        0.0f, // afy
-        0.0f, // afz
-        0.0f, // yaw
-        0.0f); // yaw_rate
+    return copter.flightmode->get_wp(target);
 }
 
 void GCS_MAVLINK_Copter::send_position_target_local_ned()
@@ -983,10 +955,10 @@ void GCS_MAVLINK_Copter::handle_message_set_attitude_target(const mavlink_messag
         if (is_equal(packet.thrust, 0.5f)) {
             climb_rate_ms_or_thrust = 0.0f;
         } else if (packet.thrust > 0.5f) {
-            // climb at up to WPNAV_SPEED_UP
+            // climb at up to WP_SPD_UP
             climb_rate_ms_or_thrust = (packet.thrust - 0.5f) * 2.0f * copter.wp_nav->get_default_speed_up_ms();
         } else {
-            // descend at up to WPNAV_SPEED_DN
+            // descend at up to WP_SPD_DN
             climb_rate_ms_or_thrust = (0.5f - packet.thrust) * 2.0f * -copter.wp_nav->get_default_speed_down_ms();
         }
     }
@@ -1298,7 +1270,7 @@ void GCS_MAVLINK_Copter::send_wind() const
     mavlink_msg_wind_send(
         chan,
         degrees(atan2f(-wind.y, -wind.x)),
-        wind.length(),
+        wind.xy().length(),
         wind.z);
 }
 
@@ -1354,7 +1326,7 @@ uint8_t GCS_MAVLINK_Copter::high_latency_wind_speed() const
     // return units are m/s*5
     if (AP::ahrs().airspeed_vector_TAS(airspeed_vec_bf)) {
         wind = AP::ahrs().wind_estimate();
-        return wind.length() * 5;
+        return wind.xy().length() * 5;
     }
     return 0; 
 }
@@ -1470,11 +1442,13 @@ uint8_t GCS_MAVLINK_Copter::send_available_mode(uint8_t index) const
 
     // Ask the mode for its name and number
     const char* name;
-    uint8_t mode_number;
+    Mode::Number mode_number;
+    bool enabled;
 
     if (index_zero < base_mode_count) {
         name = modes[index_zero]->name();
-        mode_number = (uint8_t)modes[index_zero]->mode_number();
+        mode_number = modes[index_zero]->mode_number();
+        enabled = modes[index_zero]->enabled();
 
     } else {
 #if AP_SCRIPTING_ENABLED
@@ -1484,7 +1458,8 @@ uint8_t GCS_MAVLINK_Copter::send_available_mode(uint8_t index) const
             return mode_count;
         }
         name = copter.mode_guided_custom[custom_index]->name();
-        mode_number = (uint8_t)copter.mode_guided_custom[custom_index]->mode_number();
+        mode_number = copter.mode_guided_custom[custom_index]->mode_number();
+        enabled = true; // The script has actively added the mode, it must be enabled
 #else
         // Should not endup here
         return mode_count;
@@ -1495,23 +1470,27 @@ uint8_t GCS_MAVLINK_Copter::send_available_mode(uint8_t index) const
     // Auto RTL is odd
     // Have to deal with is separately because its number and name can change depending on if were in it or not
     if (index_zero == 0) {
-        mode_number = (uint8_t)Mode::Number::AUTO_RTL;
+        mode_number = Mode::Number::AUTO_RTL;
         name = "Auto RTL";
 
     } else if (index_zero == 1) {
-        mode_number = (uint8_t)Mode::Number::AUTO;
+        mode_number = Mode::Number::AUTO;
         name = "Auto";
 
     }
 #endif
+
+    // the check here must be the same as the one in `get_available_mode_enabled_mask`
+    const bool user_selectable = enabled && copter.gcs_mode_enabled(mode_number);
 
     mavlink_msg_available_modes_send(
         chan,
         mode_count,
         index,
         MAV_STANDARD_MODE::MAV_STANDARD_MODE_NON_STANDARD,
-        mode_number,
-        0, // MAV_MODE_PROPERTY bitmask
+        (uint8_t)mode_number,
+        // MAV_MODE_PROPERTY bitmask,
+        user_selectable ? 0 : MAV_MODE_PROPERTY_NOT_USER_SELECTABLE,
         name
     );
 

@@ -21,13 +21,17 @@ AP_FLAKE8_CLEAN
 Author: Amilcar do Carmo Lucas, IAV GmbH
 """
 
-import os
-import glob
-import re
-from typing import Any, Dict, List, Tuple
-import xml.etree.ElementTree as ET
 import argparse
+import glob
 import logging
+import os
+import re
+import xml.etree.ElementTree as ET
+
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Tuple
 
 # URL of the XML file
 BASE_URL = "https://autotest.ardupilot.org/Parameters/"
@@ -401,7 +405,7 @@ def main():
         update_parameter_documentation(doc_dict, args.target, args.sort)
         if args.verbose:
             print_read_only_params(doc_dict)
-    except Exception as exp:  # pylint: disable=W0718
+    except Exception as exp:  # pylint: disable=W0718  # noqa: BLE001
         logging.fatal(exp)
         exit(1)  # pylint: disable=R1722
 
