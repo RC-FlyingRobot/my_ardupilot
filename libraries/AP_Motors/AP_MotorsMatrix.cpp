@@ -422,8 +422,10 @@ void AP_MotorsMatrix::check_for_failed_motor(float throttle_thrust_best_plus_adj
     if (is_rc_triggered_failure) {
         // 意図的に停止させるモーターのインデックスを強制指定（例：モーター1）
         _motor_lost_index = 0; 
-        thrust_balanced = false; // 推力バランスが崩れたことをシステムに通知
-        
+        _thrust_balanced = false; // 推力バランスが崩れたことをシステムに通知
+
+        gcs().send_text(MAV_SEVERITY_EMERGENCY, "Potential Thrust Loss (%d)", (int)motors->get_lost_motor() + 1);
+
         // 故障が確定したため、従来のフィルタリングベースの検出処理をスキップしてリターン
         return; 
     }
