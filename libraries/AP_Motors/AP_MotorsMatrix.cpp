@@ -14,6 +14,7 @@
  */
 
 #include <AP_HAL/AP_HAL.h>
+#include <GCS_MAVLink/GCS.h>
 #include "AP_MotorsMatrix.h"
 #include <AP_Vehicle/AP_Vehicle_Type.h>
 
@@ -424,8 +425,7 @@ void AP_MotorsMatrix::check_for_failed_motor(float throttle_thrust_best_plus_adj
         _motor_lost_index = 0; 
         _thrust_balanced = false; // 推力バランスが崩れたことをシステムに通知
 
-        gcs().send_text(MAV_SEVERITY_EMERGENCY, "Potential Thrust Loss (%d)", (int)motors->get_lost_motor() + 1);
-
+        GCS_SEND_TEXT(MAV_SEVERITY_EMERGENCY, "Potential Thrust Loss (%d)", get_lost_motor() + 1);
         // 故障が確定したため、従来のフィルタリングベースの検出処理をスキップしてリターン
         return; 
     }
