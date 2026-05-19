@@ -158,24 +158,23 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
                     "Altitude not maintained: want %.2f (+/- %.2f) got=%.2f" %
                     (previous_altitude, delta, m.alt))
 
+    def dive(self, alt, mode='MANUAL', timeout=120):
+        """Dive to a target altitude."""
+        self.progress("DIVE")
+        self.change_mode(mode)
+        if not self.armed():
+            self.wait_ready_to_arm()
+            self.arm_vehicle()
+        pwm = 1300 if self.get_altitude(relative=True) > alt else 1700
+        self.set_rc(Joystick.Throttle, pwm)
+        self.wait_altitude(altitude_min=alt - 1, altitude_max=alt, relative=False, timeout=timeout)
+        self.set_rc(Joystick.Throttle, 1500)
+        self.delay_sim_time(1)
+        self.progress("DIVE COMPLETE")
+
     def AltitudeHold(self):
         """Test ALT_HOLD mode"""
-        self.wait_ready_to_arm()
-        self.arm_vehicle()
-        self.change_mode('ALT_HOLD')
-
-        msg = self.assert_receive_message('GLOBAL_POSITION_INT', timeout=5)
-        pwm = 1300
-        if msg.relative_alt/1000.0 < -6.0:
-            # need to go up, not down!
-            pwm = 1700
-        self.set_rc(Joystick.Throttle, pwm)
-        self.wait_altitude(altitude_min=-6, altitude_max=-5)
-        self.set_rc(Joystick.Throttle, 1500)
-
-        # let the vehicle settle (momentum / stopping point shenanigans....)
-        self.delay_sim_time(1)
-
+        self.dive(-5, mode='ALT_HOLD')
         self.watch_altitude_maintained()
 
         self.set_rc(Joystick.Throttle, 1000)
@@ -312,16 +311,8 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
         self.context_push()
         self.set_parameter("SIM_BARO_RND", 0.01)
 
-        self.wait_ready_to_arm()
-        self.arm_vehicle()
-        self.change_mode('MANUAL')
-
         # Dive to -5m, outside of rangefinder range, will act like ALT_HOLD
-        pwm = 1300 if self.get_altitude(relative=True) > -6 else 1700
-        self.set_rc(Joystick.Throttle, pwm)
-        self.wait_altitude(altitude_min=-6, altitude_max=-5, relative=False, timeout=60)
-        self.set_rc(Joystick.Throttle, 1500)
-        self.delay_sim_time(1)
+        self.dive(-5, timeout=60)
         self.context_collect('STATUSTEXT')
         self.change_mode(21)
         self.wait_statustext('waiting for a rangefinder reading', check_context=True)
@@ -430,15 +421,9 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
 
         self.context_push()
         self.prepare_synthetic_seafloor_test(sea_floor_depth, match_distance)
-        self.change_mode('MANUAL')
-        self.arm_vehicle()
 
         # Dive to match_distance off the bottom in preparation for the mission
-        pwm = 1300 if self.get_altitude(relative=True) > start_altitude else 1700
-        self.set_rc(Joystick.Throttle, pwm)
-        self.wait_altitude(altitude_min=start_altitude-1, altitude_max=start_altitude, relative=False, timeout=120)
-        self.set_rc(Joystick.Throttle, 1500)
-        self.delay_sim_time(1)
+        self.dive(start_altitude)
 
         # Turn on surftrak and move around
         self.change_mode(21)
@@ -489,16 +474,8 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
         filename = "terrain_mission.txt"
         self.load_mission(filename)
 
-        self.change_mode('MANUAL')
-        self.arm_vehicle()
-
         # Dive to match_distance off the bottom in preparation for the mission
-        pwm = 1300 if self.get_altitude(relative=True) > start_altitude else 1700
-        self.set_rc(Joystick.Throttle, pwm)
-        self.wait_altitude(altitude_min=start_altitude-1, altitude_max=start_altitude, relative=False, timeout=120)
-        self.set_rc(Joystick.Throttle, 1500)
-        self.delay_sim_time(1)
-
+        self.dive(start_altitude)
         self.change_mode('AUTO')
         self.watch_true_distance_maintained(match_distance, delta=validation_delta, timeout=500.0, final_waypoint=4)
 
@@ -654,7 +631,7 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
 
         self.change_mode('AUTO')
 
-        self.wait_waypoint(1, 5, max_dist=5)
+        self.wait_waypoint(1, 5, max_dist_to_final_wp_m=5)
 
         self.disarm_vehicle()
 
@@ -666,11 +643,11 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
         self.wait_ready_to_arm()
         self.arm_vehicle()
         self.change_mode('AUTO')
-        self.wait_waypoint(1, 2, max_dist=5)
+        self.wait_waypoint(1, 2, max_dist_to_final_wp_m=5)
         self.wait_statustext("Gripper Grabbed", timeout=60)
-        self.wait_waypoint(1, 4, max_dist=5)
+        self.wait_waypoint(1, 4, max_dist_to_final_wp_m=5)
         self.wait_statustext("Gripper Released", timeout=60)
-        self.wait_waypoint(1, 6, max_dist=5)
+        self.wait_waypoint(1, 6, max_dist_to_final_wp_m=5)
         self.disarm_vehicle()
 
     def SET_POSITION_TARGET_GLOBAL_INT(self):
@@ -781,9 +758,8 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
         self.disarm_vehicle()
 
     def GPSForYaw(self):
-        '''Consume heading of NMEA GPS and propagate to ATTITUDE'''
+        '''Test consumption of heading from NMEA GPS and its propagation to ATTITUDE'''
 
-        # load parameters with gps for yaw and 10 degrees offset
         self.load_default_params_file("sub-gps-for-yaw-nmea.parm")
         self.reboot_sitl()
         # wait for the vehicle to be ready
@@ -887,15 +863,9 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
 
     def MAV_CMD_DO_REPOSITION(self):
         """Move vehicle using MAV_CMD_DO_REPOSITION"""
-        self.wait_ready_to_arm()
-        self.arm_vehicle()
-
         # Dive so that rangefinder is in range, required for MAV_FRAME_GLOBAL_TERRAIN_ALT
         start_altitude = -25
-        pwm = 1300 if self.get_altitude(relative=True) > start_altitude else 1700
-        self.set_rc(Joystick.Throttle, pwm)
-        self.wait_altitude(altitude_min=start_altitude-1, altitude_max=start_altitude, relative=False, timeout=120)
-        self.set_rc(Joystick.Throttle, 1500)
+        self.dive(start_altitude)
         self.change_mode('GUIDED')
 
         loc = self.mav.location()
@@ -925,7 +895,7 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
         self.set_rc_default()
         self.arm_vehicle()
         self.change_mode('AUTO')
-        self.wait_waypoint(1, 4, max_dist=5)
+        self.wait_waypoint(1, 4, max_dist_to_final_wp_m=5)
         self.delay_sim_time(3)
 
         # Expect sub to hover at final altitude
@@ -1317,6 +1287,41 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
         self.disarm_vehicle()
         self.context_pop()
 
+    def UTMGlobalPositionWaypoint(self):
+        '''test UTM_GLOBAL_POSITION waypoint fields in AUTO'''
+        self.upload_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 50, 0, -10),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        # seq 0 = home, seq 1 = WAYPOINT (50m north, 10m depth)
+        wp = self.assert_fetch_mission_item_int(1, 1, 1, mavutil.mavlink.MAV_MISSION_TYPE_MISSION)
+
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.change_mode('AUTO')
+        self.send_cmd(mavutil.mavlink.MAV_CMD_MISSION_START)
+        self.wait_current_waypoint(1, timeout=30)
+
+        # epsilon=1 allows for 1-unit (0.11m) rounding from AP's internal coordinate conversion
+        m = self.assert_received_message_field_values("UTM_GLOBAL_POSITION", {
+            "next_lat": wp.x,
+            "next_lon": wp.y,
+        }, poll=True, epsilon=1)
+        if not (m.flags & mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_NEXT_WAYPOINT_AVAILABLE):
+            raise NotAchievedException(f"AUTO: NEXT_WAYPOINT_AVAILABLE not set (flags=0x{m.flags:x})")
+        self.disarm_vehicle(force=True)
+
+    def UTMGlobalPosition(self):
+        '''test UTM_GLOBAL_POSITION message sending'''
+        self.wait_ready_to_arm()
+        m = self.assert_received_message_field_values("UTM_GLOBAL_POSITION", {
+            "flight_state": mavutil.mavlink.UTM_FLIGHT_STATE_UNKNOWN,
+        }, poll=True)
+        if all(b == 0 for b in m.uas_id):
+            raise NotAchievedException("UAS ID is all zeros")
+        if m.flags & mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_UAS_ID_AVAILABLE == 0:
+            raise NotAchievedException("UAS_ID_AVAILABLE flag not set")
+
     def tests(self):
         '''return list of all tests'''
         ret = super(AutoTestSub, self).tests()
@@ -1358,6 +1363,8 @@ class AutoTestSub(vehicle_test_suite.TestSuite):
             self.GPSForYaw,
             self.WaterDepth,
             self.VisoForYaw,
+            self.UTMGlobalPosition,
+            self.UTMGlobalPositionWaypoint,
         ])
 
         return ret

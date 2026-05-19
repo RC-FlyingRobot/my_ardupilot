@@ -41,7 +41,6 @@
 #include <AP_AHRS/AP_AHRS.h>
 #include <Filter/Filter.h>             // Filter library
 #include <AP_Vehicle/AP_Vehicle.h>         // needed for AHRS build
-#include <AP_InertialNav/AP_InertialNav.h>     // inertial navigation library
 #include <AP_RCMapper/AP_RCMapper.h>        // RC input mapping library
 #include <AP_BattMonitor/AP_BattMonitor.h>     // Battery monitor library
 #include <AP_Arming/AP_Arming.h>
@@ -109,10 +108,6 @@ private:
     RC_Channel *channel_up;
     RC_Channel *channel_yaw;
 
-    // flight modes convenience array
-    AP_Int8 *flight_modes;
-    static constexpr uint8_t num_flight_modes = 6;
-
     // Arming/Disarming management class
     AP_Arming_Blimp arming;
 
@@ -167,9 +162,6 @@ private:
 
     RCMapper rcmap;
 
-    // inertial nav alt when we armed
-    float arming_altitude_m;
-
     // Failsafe
     struct {
         int8_t radio_counter;            // number of iterations with throttle below throttle_fs_value
@@ -217,9 +209,6 @@ private:
     NotchFilterVector2f vel_xy_filter;
     NotchFilterFloat vel_z_filter;
     NotchFilterFloat vel_yaw_filter;
-
-    // Inertial Navigation
-    AP_InertialNav inertial_nav;
 
     // Vel & pos PIDs
     AC_PID_2D pid_vel_xy{3, 0.2, 0, 0, 0.2, 3, 3}; //These are the defaults - P I D FF IMAX FiltHz FiltDHz DT

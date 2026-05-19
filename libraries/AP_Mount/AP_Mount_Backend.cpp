@@ -109,6 +109,19 @@ void AP_Mount_Backend::update_mnt_target_from_rc_target()
             mnt_target.target_type = MountTargetType::ANGLE;
             return;
         }
+        // zero rates when in failsafe
+        if (mnt_target.target_type == MountTargetType::RATE) {
+            // note that we do not change the frame here; if a gimbal
+            // is tracking in earth-frame it will continue to do so.
+            mnt_target.rate_rads.roll = 0;
+            mnt_target.rate_rads.pitch = 0;
+            mnt_target.rate_rads.yaw = 0;
+        }
+        return;
+    }
+
+    if (!rc().has_valid_input()) {
+        return;
     }
 
     // get RC input from pilot
@@ -120,6 +133,9 @@ void AP_Mount_Backend::update_mnt_target_from_rc_target()
     mnt_target.angle_rad.yaw_is_ef = FPV_option ? false : _yaw_lock;
     mnt_target.angle_rad.roll_is_ef = FPV_option ? false : _roll_lock;
     mnt_target.angle_rad.pitch_is_ef = FPV_option ? false : _pitch_lock;
+    mnt_target.rate_rads.yaw_is_ef = FPV_option ? false : _yaw_lock;
+    mnt_target.rate_rads.roll_is_ef = FPV_option ? false : _roll_lock;
+    mnt_target.rate_rads.pitch_is_ef = FPV_option ? false : _pitch_lock;
 
     // if RC_RATE is zero, targets are angle
     if (_params.rc_rate_max <= 0) {
@@ -370,6 +386,39 @@ void AP_Mount_Backend::set_target_sysid(uint8_t sysid)
 }
 
 #if HAL_GCS_ENABLED
+// send a CAMERA_INFORMATION message to GCS
+void AP_Mount_Backend::send_camera_information(mavlink_channel_t chan) const
+{
+    if (!has_camera_information()) {
+        return;
+    }
+
+    uint8_t vendor_name[MAVLINK_MSG_CAMERA_INFORMATION_FIELD_VENDOR_NAME_LEN+1] {};
+    get_camera_vendor_name((char*)vendor_name, ARRAY_SIZE(vendor_name)-1);
+
+    uint8_t model_name[MAVLINK_MSG_CAMERA_INFORMATION_FIELD_MODEL_NAME_LEN+1] {};
+    get_camera_model_name((char*)model_name, ARRAY_SIZE(model_name)-1);
+
+    const char cam_definition_uri[MAVLINK_MSG_CAMERA_INFORMATION_FIELD_CAM_DEFINITION_URI_LEN] {};
+
+    mavlink_msg_camera_information_send(
+        chan,
+        AP_HAL::millis(),              // time_boot_ms
+        vendor_name,                   // vendor_name uint8_t[32]
+        model_name,                    // model_name uint8_t[32]
+        get_camera_firmware_version(), // firmware_version uint32_t
+        get_camera_focal_length_mm(),  // focal_length float (mm)
+        NaNf,                          // sensor_size_h float (mm)
+        NaNf,                          // sensor_size_v float (mm)
+        0,                             // resolution_h uint16_t (pix)
+        0,                             // resolution_v uint16_t (pix)
+        get_camera_lens_id(),          // lens_id uint8_t
+        get_camera_cap_flags(),        // flags uint32_t (CAMERA_CAP_FLAGS)
+        0,                             // cam_definition_version uint16_t
+        cam_definition_uri,            // cam_definition_uri char[140]
+        _instance + 1);                // gimbal_device_id uint8_t
+}
+
 // send a GIMBAL_DEVICE_ATTITUDE_STATUS message to GCS
 void AP_Mount_Backend::send_gimbal_device_attitude_status(mavlink_channel_t chan)
 {
@@ -616,7 +665,12 @@ void AP_Mount_Backend::write_log(uint64_t timestamp_us)
     float target_pitch = nanf;
     float target_yaw = nanf;
     bool target_yaw_is_ef = false;
-    IGNORE_RETURN(get_angle_target(target_roll, target_pitch, target_yaw, target_yaw_is_ef));
+    if (mnt_target.target_type == MountTargetType::ANGLE) {
+        target_roll = degrees(mnt_target.angle_rad.roll);
+        target_pitch = degrees(mnt_target.angle_rad.pitch);
+        target_yaw = degrees(mnt_target.angle_rad.yaw);
+        target_yaw_is_ef = mnt_target.angle_rad.yaw_is_ef;
+    }
 
     // get rangefinder distance
     float rangefinder_dist = nanf;
@@ -1275,6 +1329,7 @@ void AP_Mount_Backend::send_target_to_gimbal()
 }
 
 
+#if AP_SCRIPTING_ENABLED
 // get target rate in deg/sec. returns true on success
 bool AP_Mount_Backend::get_rate_target(float& roll_degs, float& pitch_degs, float& yaw_degs, bool& yaw_is_earth_frame)
 {
@@ -1301,7 +1356,6 @@ bool AP_Mount_Backend::get_angle_target(float& roll_deg, float& pitch_deg, float
     return false;
 }
 
-#if AP_SCRIPTING_ENABLED
 // return target location if available
 // returns true if a target location is available and fills in target_loc argument
 bool AP_Mount_Backend::get_location_target(Location &_target_loc)

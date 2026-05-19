@@ -18,7 +18,7 @@ The **HWH7** is a flight controller designed and produced by HW.
 
 ![image](HWH7.png)
 
-## Serial Ports (UARTs)
+## UART Mapping
 
 Serial ordering (ArduPilot): `SERIAL0..SERIAL8` = `OTG1, USART1, USART2, USART3, UART4, UART5, USART6, UART7, UART8`
 
@@ -34,7 +34,7 @@ Serial ordering (ArduPilot): `SERIAL0..SERIAL8` = `OTG1, USART1, USART2, USART3,
 | UART7 | SERIAL7 | UART7 | PE8 | PE7 | User |
 | UART8 | SERIAL8 | UART8 | PE1 | PE0 | ESC Telemetry |
 
-## PWM Outputs
+## PWM Output
 
 The HWH7 supports up to 12 PWM or DShot outputs. These outputs are organized into 5 groups based on the MCU timers:
 
@@ -98,7 +98,7 @@ Because both signals share the same UART port on different pins, **simultaneous 
 - **To use telemetry from ESC 1:** Set `SERIAL8_OPTIONS` to `0` (default).
 - **To use telemetry from ESC 2:** Set `SERIAL8_OPTIONS` to `8` (SwapTXRX), which allows the flight controller to listen for telemetry on the TX8 pin.
 
-## OSD
+## OSD Support
 
 The HWH7 includes an integrated AT7456E analog OSD chip, accessible via the CAM1/2 and VTX pins. MSP DisplayPort OSD is also supported and enabled by default for use with digital video systems.
 
@@ -116,7 +116,7 @@ The bootloader hwdef enables flashing firmware from microSD (`AP_BOOTLOADER_FLAS
 
 Initial firmware load can be done with DFU by plugging in USB with the bootloader button pressed.
 
-Firmware can be found on the `firmware server <https://firmare.ardupilot.org>`__ in folders marked "HWH7"
+Firmware can be found on the [firmware server](https://firmware.ardupilot.org) in folders marked "HWH7"
 
 Then load the `*_with_bl.hex` firmware using a DFU tool.
 

@@ -136,6 +136,7 @@ void UARTDriver_Console::printf(const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     HAP_PRINTF(buf);
+    qurt_printf_to_host(buf);
 }
 
 

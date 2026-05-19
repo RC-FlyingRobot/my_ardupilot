@@ -93,6 +93,13 @@ void GCS_MAVLINK_Sub::send_nav_controller_output() const
         0);
 }
 
+// returns a Location to which the vehicle is currently heading, or
+// would head in an autonomous mode
+bool GCS_MAVLINK_Sub::get_target_location(Location &loc) const
+{
+    return sub.wp_nav.is_active() && sub.wp_nav.get_wp_destination_loc(loc);
+}
+
 int16_t GCS_MAVLINK_Sub::vfr_hud_throttle() const
 {
     return (int16_t)(sub.motors.get_throttle() * 100);
@@ -634,7 +641,9 @@ void GCS_MAVLINK_Sub::handle_message(const mavlink_message_t &msg)
                     packet.coordinate_frame == MAV_FRAME_BODY_NED ||
                     packet.coordinate_frame == MAV_FRAME_BODY_FRD ||
                     packet.coordinate_frame == MAV_FRAME_BODY_OFFSET_NED) {
-                pos_vector += sub.inertial_nav.get_position_neu_cm();
+                Vector3f pos_cm = (sub.pos_control.get_pos_estimate_NED_m() * 100.0f).tofloat();
+                pos_cm.z = -pos_cm.z;
+                pos_vector += pos_cm;
             }
         }
 
@@ -736,16 +745,14 @@ void GCS_MAVLINK_Sub::handle_message(const mavlink_message_t &msg)
         break;
     }
 
-    // This adds support for leak detectors in a separate enclosure
-    // connected to a mavlink enabled subsystem
+    // Remote leak sensor support (e.g. in a separate enclosure), via MAVLink status messages.
     case MAVLINK_MSG_ID_SYS_STATUS: {
-        uint32_t MAV_SENSOR_WATER = 0x20000000;
         mavlink_sys_status_t packet;
         mavlink_msg_sys_status_decode(&msg, &packet);
         if ((msg.sysid == gcs().sysid_this_mav()) &&
-            (packet.onboard_control_sensors_enabled & MAV_SENSOR_WATER) &&
-            !(packet.onboard_control_sensors_health & MAV_SENSOR_WATER)
-        ) {
+            (packet.onboard_control_sensors_present & MAV_SYS_STATUS_EXTENSION_USED) &&
+            (packet.onboard_control_sensors_enabled_extended & MAV_SYS_STATUS_SENSOR_LEAK) &&
+            !(packet.onboard_control_sensors_health_extended & MAV_SYS_STATUS_SENSOR_LEAK)) {
             sub.leak_detector.set_detect();
         }
         break;

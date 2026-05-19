@@ -239,7 +239,7 @@ void GCS_MAVLINK_Plane::send_nav_controller_output() const
             MIN(plane.auto_state.wp_distance, UINT16_MAX),
             plane.calc_altitude_error_cm() * 0.01,
             plane.airspeed_error * 100,  // incorrect units; see PR#7933
-            nav_controller->crosstrack_error());
+            nav_controller->crosstrack_error_m());
     }
 }
 
@@ -580,7 +580,7 @@ MAV_RESULT GCS_MAVLINK_Plane::handle_command_int_do_reposition(const mavlink_com
 
 #if AP_FENCE_ENABLED
     // reject destination if outside the fence
-    if (!plane.fence.check_destination_within_fence(requested_position)) {
+    if (!plane.fence.check_location_within_fence(requested_position)) {
         LOGGER_WRITE_ERROR(LogErrorSubsystem::NAVIGATION, LogErrorCode::DEST_OUTSIDE_FENCE);
         return MAV_RESULT_DENIED;
     }

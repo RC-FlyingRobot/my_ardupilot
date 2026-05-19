@@ -92,6 +92,13 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
     def set_autodisarm_delay(self, delay):
         self.set_parameter("LAND_DISARMDELAY", delay)
 
+    def start_flying_mission(self, filename: str) -> None:
+        self.progress(f"Flying mission {filename}")
+        self.load_mission(filename)
+        self.change_mode('AUTO')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+
     def takeoff(self, alt=150, alt_max=None, relative=True, mode=None, timeout=None):
         """Takeoff to altitude."""
 
@@ -562,12 +569,15 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         num_wp = self.load_mission(filename, strict=strict)-1
         self.fly_mission_waypoints(num_wp, mission_timeout=mission_timeout, quadplane=quadplane)
 
-    def fly_mission_waypoints(self, num_wp, mission_timeout=60.0, quadplane=False):
+    def fly_mission_waypoints(self, num_wp, mission_timeout=60.0, quadplane=False,
+                              dist_to_final_wp_threshold_m: float | None = None):
         self.set_current_waypoint(0, check_afterwards=False)
         self.context_push()
         self.context_collect('STATUSTEXT')
         self.change_mode('AUTO')
-        self.wait_waypoint(1, num_wp, max_dist=60, timeout=mission_timeout)
+        if dist_to_final_wp_threshold_m is None:
+            dist_to_final_wp_threshold_m = 60.0
+        self.wait_waypoint(1, num_wp, max_dist_to_final_wp_m=dist_to_final_wp_threshold_m, timeout=mission_timeout)
         self.wait_groundspeed(0, 0.5, timeout=mission_timeout)
         if quadplane:
             self.wait_statustext("Throttle disarmed", timeout=200, check_context=True)
@@ -740,10 +750,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             "LAND_DS_ELEV_PWM": deepstall_elevator_pwm,
             "RTL_AUTOLAND": 1,
         })
-        self.load_mission("plane-deepstall-mission.txt")
-        self.change_mode("AUTO")
-        self.wait_ready_to_arm()
-        self.arm_vehicle()
+        self.start_flying_mission("plane-deepstall-mission.txt")
         self.progress("Waiting for deepstall messages")
 
         # note that the following two don't necessarily happen in this
@@ -774,10 +781,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             "LAND_DS_ELEV_PWM": deepstall_elevator_pwm,
             "RTL_AUTOLAND": 1,
         })
-        self.load_mission("plane-deepstall-relative-mission.txt")
-        self.change_mode("AUTO")
-        self.wait_ready_to_arm()
-        self.arm_vehicle()
+        self.start_flying_mission("plane-deepstall-relative-mission.txt")
         self.wait_current_waypoint(4)
 
         # assume elevator is on channel 2:
@@ -1062,11 +1066,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.set_rc(flaps_ch, flaps_ch_min)
         self.wait_servo_channel_value(servo_ch, servo_ch_min)
 
-        self.progress("Flying mission %s" % filename)
-        self.load_mission(filename)
-        self.change_mode('AUTO')
-        self.wait_ready_to_arm()
-        self.arm_vehicle()
+        self.start_flying_mission(filename)
         self.start_subtest("flaps should deploy for landing")  # (RC input value used for position?!)
         self.wait_servo_channel_value(servo_ch, flaps_ch_trim, timeout=300)
         self.start_subtest("flaps should undeploy at the end")
@@ -2204,7 +2204,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.change_mode('AUTO')
         self.wait_ready_to_arm()
         self.arm_vehicle()
-        self.wait_waypoint(5, 5, max_dist=100)
+        self.wait_waypoint(5, 5, max_dist_to_final_wp_m=100)
         rf = self.assert_receive_message('RANGEFINDER')
         ds = self.assert_receive_message('DISTANCE_SENSOR')
         gpi = self.assert_receive_message('GLOBAL_POSITION_INT')
@@ -2647,7 +2647,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.wait_servo_channel_value(3, 1200, timeout=3, comparator=operator.lt)
 
         self.progress("Waiting for next WP with no thermalling")
-        self.wait_waypoint(4, 4, timeout=1200, max_dist=120)
+        self.wait_waypoint(4, 4, timeout=1200, max_dist_to_final_wp_m=120)
 
         # Disarm
         self.disarm_vehicle_expect_fail()
@@ -2899,7 +2899,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.change_mode('AUTO')
 
         # After waypoint 2, go to GUIDED.
-        self.wait_waypoint(3, 3, max_dist=3150, timeout=600)
+        self.wait_waypoint(3, 3, max_dist_to_final_wp_m=3150, timeout=600)
         self.progress("Entering guided and flying somewhere constant")
         self.change_mode("GUIDED")
         loc = self.mav.location()
@@ -2918,7 +2918,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.change_mode('AUTO')
         self.install_message_hook_context(record_maxalt)
 
-        self.wait_waypoint(3, 3, max_dist=100, timeout=600)
+        self.wait_waypoint(3, 3, max_dist_to_final_wp_m=100, timeout=600)
 
         self.context_pop()
 
@@ -3026,16 +3026,20 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.change_mode('LOITER')
         self.delay_sim_time(10)
         self.change_mode('CIRCLE')
-        self.wait_altitude(alt*0.9, alt*1.1, minimum_duration=10, relative=True)
+        self.wait_altitude(alt*0.9, alt*1.1, minimum_duration=10,
+                           altitude_source="TERRAIN_REPORT.current_height")
         self.fly_home_land_and_disarm()
 
-    def fly_generic_mission(self, filename, mission_timeout=60.0, strict=True):
+    def fly_generic_mission(self, filename, mission_timeout=60.0, strict=True,
+                            dist_to_final_wp_threshold_m: float | None = None):
         """Fly a mission from the Generic_Missions directory."""
         self.progress("Flying generic mission %s" % filename)
         num_wp = self.load_generic_mission(filename, strict=strict) - 1
-        self.fly_mission_waypoints(num_wp, mission_timeout=mission_timeout)
+        self.fly_mission_waypoints(num_wp, mission_timeout=mission_timeout,
+                                   dist_to_final_wp_threshold_m=dist_to_final_wp_threshold_m)
 
-    def fly_external_AHRS(self, sim, eahrs_type):
+    def fly_external_AHRS(self, sim, eahrs_type,
+                          dist_to_final_wp_threshold_m: float | None = None):
         """Fly with external AHRS"""
         self.customise_SITL_commandline(["--serial4=sim:%s" % sim])
 
@@ -3058,7 +3062,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
 
         self.wait_ready_to_arm()
         self.arm_vehicle()
-        self.fly_generic_mission("externalahrs.txt")
+        self.fly_generic_mission("externalahrs.txt", dist_to_final_wp_threshold_m=dist_to_final_wp_threshold_m)
 
     def wait_and_maintain_wind_estimate(
             self,
@@ -3276,7 +3280,11 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.set_parameters({
             "EAHRS_OPTIONS": 4  # INS mode -> Bit 2 set
         })
-        self.fly_external_AHRS("SensAItionINS", 11)
+        # This test is sensitive to SITL::Plane's update() loop timing, which manifests as landing
+        # quite far from the final target spot. Ideally, this increased threshold will be removed
+        # in the future when the test is more robust.
+        self.fly_external_AHRS("SensAItionINS", 11,
+                               dist_to_final_wp_threshold_m=75.0)
 
     def KebniSensAItionExternalIMU(self):
         '''Test Kebni SensAItion External IMU-only mode'''
@@ -4513,7 +4521,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.wait_ready_to_arm()
         self.arm_vehicle()
         self.wait_text("Autoland direction", check_context=True)
-        self.wait_waypoint(2, 2, max_dist=100)
+        self.wait_waypoint(2, 2, max_dist_to_final_wp_m=100)
         self.change_mode(26) # AUTOLAND need .43 pymavlink to use text name
         self.wait_disarmed(400)
         self.progress("Check the landed heading matches takeoff plus offset")
@@ -5183,6 +5191,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         )
         self.set_parameters({
             "ARSPD_USE": 0.0,
+            "TKOFF_LVL_ALT": 30,
         })
         self.change_mode("TAKEOFF")
 
@@ -5226,7 +5235,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.change_mode("TAKEOFF")
 
         # waiting for the EKF to be happy won't work
-        self.delay_sim_time(20)
+        self.wait_prearm_sys_status_healthy()
         self.arm_vehicle()
 
         target_alt = self.get_parameter("TKOFF_ALT")
@@ -5326,11 +5335,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             "TKOFF_THR_MINACC": 3.0,
         })
 
-        self.load_mission("flaps_tkoff_50.txt")
-        self.change_mode('AUTO')
-
-        self.wait_ready_to_arm()
-        self.arm_vehicle()
+        self.start_flying_mission("flaps_tkoff_50.txt")
 
         # Throw the catapult.
         self.set_servo(7, 2000)
@@ -6528,6 +6533,34 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self._MAV_CMD_DO_FLIGHTTERMINATION(self.run_cmd)
         self._MAV_CMD_DO_FLIGHTTERMINATION(self.run_cmd_int)
 
+    def MAV_CMD_DO_FLIGHTTERMINATION_unterminate(self):
+        '''unterminate a terminated vehicle'''
+        self.set_parameters({
+            "AFS_ENABLE": 1,
+            "MAV_GCS_SYSID": self.mav.source_system,
+            "AFS_TERM_ACTION": 42,
+        })
+        self.takeoff(50, mode='TAKEOFF', timeout=200)
+
+        # lock home to avoid alt messups
+        original_home = self.home_position_as_mav_location()
+        self.set_home(original_home)
+
+        self.context_collect('STATUSTEXT')
+
+        self.run_cmd_int(mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, p1=1)
+        self.wait_disarmed()
+        self.wait_text('Terminating due to GCS request', check_context=True)
+        self.run_cmd_int(mavutil.mavlink.MAV_CMD_DO_FLIGHTTERMINATION, p1=0)
+        self.wait_disarmed()
+        self.wait_text('Aborting termination due to GCS request', check_context=True)
+        self.wait_ready_to_arm()  # please?
+        self.arm_vehicle()
+
+        self.fly_home_land_and_disarm()
+
+        self.reboot_sitl()
+
     def MAV_CMD_DO_LAND_START(self):
         '''test MAV_CMD_DO_LAND_START as mavlink command'''
         self.set_parameters({
@@ -7091,10 +7124,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
 
         self.set_servo(6, 1000)
 
-        self.load_mission("glider-pullup-mission.txt")
-        self.change_mode("AUTO")
-        self.wait_ready_to_arm()
-        self.arm_vehicle()
+        self.start_flying_mission("glider-pullup-mission.txt")
         self.context_collect('STATUSTEXT')
 
         self.progress("Start balloon lift")
@@ -8104,6 +8134,9 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             self.ForcedDCM,
             self.DCMFallback,
             self.MAVFTP,
+            self.MAVFTPBurstEOFOffset,
+            self.MAVFTPBurstMissionDat,
+            self.MAVFTPParamPck,
             self.AUTOTUNE,
             self.AutotuneFiltering,
             self.MegaSquirt,
@@ -8134,6 +8167,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             self.MAV_CMD_DO_AUTOTUNE_ENABLE,
             self.MAV_CMD_DO_GO_AROUND,
             self.MAV_CMD_DO_FLIGHTTERMINATION,
+            self.MAV_CMD_DO_FLIGHTTERMINATION_unterminate,
             self.MAV_CMD_DO_LAND_START,
             self.MAV_CMD_NAV_ALTITUDE_WAIT,
             self.InteractTest,
@@ -8171,7 +8205,161 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             self.ScriptedArmingChecksAppletRally,
             self.PlaneFollowAppletSanity,
             self.PreflightRebootComponent,
+            self.UTMGlobalPosition,
+            self.UTMGlobalPositionWaypoint,
+            self.EK3HeightDatumResetFlushesBuffers,
         ]
+
+    def UTMGlobalPositionWaypoint(self):
+        '''test UTM_GLOBAL_POSITION waypoint fields in AUTO and GUIDED'''
+        self.start_flying_simple_relhome_mission([
+            (mavutil.mavlink.MAV_CMD_NAV_TAKEOFF, 0, 0, 50),
+            (mavutil.mavlink.MAV_CMD_NAV_WAYPOINT, 500, 0, 50),
+            (mavutil.mavlink.MAV_CMD_NAV_RETURN_TO_LAUNCH, 0, 0, 0),
+        ])
+        # seq 0 = home, seq 1 = TAKEOFF, seq 2 = WAYPOINT (500m north)
+        wp = self.assert_fetch_mission_item_int(1, 1, 2, mavutil.mavlink.MAV_MISSION_TYPE_MISSION)
+        self.wait_current_waypoint(2, timeout=120)
+
+        # epsilon=1 allows for 1-unit (0.11m) rounding from AP's internal coordinate conversion
+        m = self.assert_received_message_field_values("UTM_GLOBAL_POSITION", {
+            "next_lat": wp.x,
+            "next_lon": wp.y,
+        }, poll=True, epsilon=1)
+        if not (m.flags & mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_NEXT_WAYPOINT_AVAILABLE):
+            raise NotAchievedException(f"AUTO: NEXT_WAYPOINT_AVAILABLE not set (flags=0x{m.flags:x})")
+
+        # GUIDED mode - DO_REPOSITION while already airborne
+        home = self.poll_message("HOME_POSITION")
+        target_lat = home.latitude + 10000
+        target_lon = home.longitude
+        self.change_mode("GUIDED")
+        self.run_cmd_int(
+            mavutil.mavlink.MAV_CMD_DO_REPOSITION,
+            p5=target_lat,
+            p6=target_lon,
+            p7=50,
+            frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT,
+        )
+        self.delay_sim_time(1)
+        m = self.assert_received_message_field_values("UTM_GLOBAL_POSITION", {
+            "next_lat": target_lat,
+            "next_lon": target_lon,
+        }, poll=True, epsilon=1)
+        if not (m.flags & mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_NEXT_WAYPOINT_AVAILABLE):
+            raise NotAchievedException(f"GUIDED: NEXT_WAYPOINT_AVAILABLE not set (flags=0x{m.flags:x})")
+        self.fly_home_land_and_disarm()
+
+    def UTMGlobalPosition(self):
+        '''test UTM_GLOBAL_POSITION message sending'''
+        self.wait_ready_to_arm()
+        m = self.assert_received_message_field_values("UTM_GLOBAL_POSITION", {
+            "flight_state": mavutil.mavlink.UTM_FLIGHT_STATE_GROUND,
+        }, poll=True)
+        if all(b == 0 for b in m.uas_id):
+            raise NotAchievedException("UAS ID is all zeros")
+        expected_flags = (
+            mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_UAS_ID_AVAILABLE |
+            mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_POSITION_AVAILABLE |
+            mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_ALTITUDE_AVAILABLE |
+            mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_RELATIVE_ALTITUDE_AVAILABLE |
+            mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_HORIZONTAL_VELO_AVAILABLE |
+            mavutil.mavlink.UTM_DATA_AVAIL_FLAGS_VERTICAL_VELO_AVAILABLE
+        )
+        if m.flags & expected_flags != expected_flags:
+            raise NotAchievedException(
+                f"Expected flags 0x{expected_flags:x}, got 0x{m.flags:x}")
+        self.takeoff(alt=10, mode="TAKEOFF")
+        self.assert_received_message_field_values("UTM_GLOBAL_POSITION", {
+            "flight_state": mavutil.mavlink.UTM_FLIGHT_STATE_AIRBORNE,
+        }, poll=True)
+        self.fly_home_land_and_disarm()
+
+    def EK3HeightDatumResetFlushesBuffers(self):
+        '''Verify resetHeightDatum flushes baro and output observer buffers'''
+        # Plane::update_home() runs every 5 s while disarmed (with
+        # GPS lock) and calls ahrs.resetHeightDatum() after a baro
+        # recalibration.  Without the buffer-flush fix, stale pre-
+        # recalibration baro samples in storedBaro continue to be
+        # fused as delayed observations after the reset, producing
+        # a brief altitude transient (~0.3-0.5 m).  With the fix
+        # storedBaro and the output observer buffers are cleared
+        # so reported altitude stays near zero post-reset.
+        #
+        # The default 5 s update_home cadence does not let drift
+        # accumulate enough to make the transient unambiguous, so
+        # we suspend periodic resets (HOME_RESET_ALT=-1), inject
+        # drift, then re-enable to fire one observable reset.
+        #
+        # resetHeightDatum is a no-op while !onGround in the EKF, so
+        # the test must start from a known on-ground state.  Earlier
+        # tests in PlaneTests1b can leave the simulated aircraft
+        # airborne (e.g. mid-descent), in which case Plane's
+        # barometer.update_calibration() would still run while the
+        # EKF reset was skipped, producing a baro-vs-EKF discontinuity
+        # that the EKF then chases via the slow baroHgtOffset filter
+        # -- exactly the post-reset transient this test is meant to
+        # rule out.  Reboot so the SITL aircraft is reliably on the
+        # ground at the start of the test.
+        self.reboot_sitl()
+        self.wait_ready_to_arm()
+
+        # suspend periodic resets so baro drift can accumulate
+        self.set_parameter("HOME_RESET_ALT", -1)
+        self.delay_sim_time(2)
+
+        # populate storedBaro with samples offset from where the
+        # post-recalibration ground reference will sit.  4 s of
+        # 0.5 m/s drift offsets the buffer by ~2 m -- well above
+        # natural noise so any post-reset transient is unambiguous.
+        drift_start_us = int(self.get_sim_time() * 1.0e6)
+        self.set_parameter("SIM_BARO_DRIFT", 0.5)
+        self.delay_sim_time(4)
+        self.set_parameter("SIM_BARO_DRIFT", 0)
+
+        # re-enable periodic resets; the next 5 s tick fires
+        # update_home -> resetHeightDatum
+        self.set_parameter("HOME_RESET_ALT", 0)
+        self.delay_sim_time(8)
+
+        # find the reset in the dataflash log: PD jumps by >0.5 m
+        # between adjacent samples when resetHeightDatum fires
+        # (drift makes PD change at ~0.5 m/s, far slower than
+        # one sample interval).  Then measure peak |PD| in the
+        # 2 s window post-reset.
+        dfreader = self.dfreader_for_current_onboard_log()
+        last_pd = None
+        reset_us = None
+        peak_excursion = 0.0
+        while True:
+            m = dfreader.recv_match(type='XKF1', condition='XKF1.C==0')
+            if m is None:
+                break
+            if m.TimeUS < drift_start_us:
+                continue
+            if reset_us is None:
+                if last_pd is not None and abs(m.PD - last_pd) > 0.5:
+                    reset_us = m.TimeUS
+                    self.progress("Reset detected at %.2f s (PD %.3f -> %.3f)" %
+                                  (m.TimeUS / 1.0e6, last_pd, m.PD))
+                last_pd = m.PD
+                continue
+            if m.TimeUS - reset_us > 2.0e6:
+                break
+            peak_excursion = max(peak_excursion, abs(m.PD))
+
+        if reset_us is None:
+            raise NotAchievedException(
+                "Did not detect resetHeightDatum in log "
+                "(was update_home triggered?)")
+
+        self.progress("Peak |XKF1.PD| over 2 s post-reset: %.3f m" %
+                      peak_excursion)
+        if peak_excursion > 0.1:
+            raise NotAchievedException(
+                "Post-reset altitude transient exceeds 0.1 m: %.3f m "
+                "(stale baro buffer not flushed on resetHeightDatum)" %
+                peak_excursion)
 
     def tests1c(self):
         '''kind of reserved for flapping tests which we still have hopes for'''

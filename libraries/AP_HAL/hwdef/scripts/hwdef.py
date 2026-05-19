@@ -279,6 +279,8 @@ class HWDef:
             self.error("Bad env line for %s" % a[0])
         name = a[1]
         value = ' '.join(a[2:])
+        if name == 'OPTIMIZE' and value == '-Os':
+            self.error("'env OPTIMIZE -Os' should not appear in hwdef files, as -Os is the default")
         self.env_vars[name] = value
 
     def get_stale_defines(self):
@@ -295,11 +297,25 @@ class HWDef:
             'HAL_COMPASS_DISABLE_IST8310_INTERNAL_PROBE': 'HAL_COMPASS_DISABLE_IST8310_INTERNAL_PROBE is no longer used; try "define AP_COMPASS_IST8310_INTERNAL_BUS_PROBING_ENABLED 0"',  # noqa:E501
             'BOARD_PWM_COUNT_DEFAULT': 'BOARD_PWM_COUNT_DEFAULT is no longer used; remove it from your hwdef files',
             'HAL_PICCOLO_CAN_ENABLE': 'HAL_PICCOLO_CAN_ENABLE was renamed to AP_PICCOLOCAN_ENABLED; fix your hwdef file',
+            'HAL_PERIPH_ENABLE_NETWORKING': 'HAL_PERIPH_ENABLE_NETWORKING is no longer used; try "define AP_PERIPH_NETWORKING_ENABLED 1"',  # noqa:E501
+            'HAL_PROBE_EXTERNAL_I2C_BAROS': 'HAL_PROBE_EXTERNAL_I2C_BAROS is no longer used; try "define AP_BARO_PROBE_EXTERNAL_I2C_BUSES 1"',  # noqa:E501
         }
 
     def assert_good_define(self, name):
         if name in self.stale_defines:
             self.error(self.stale_defines[name])
+
+    def is_periph_fw(self):
+        return False
+
+    def validate_periph_defines(self):
+        '''error if any AP_PERIPH_* define is present on a non-AP_Periph board'''
+        if self.is_periph_fw():
+            return
+
+        for name in self.intdefines:
+            if name.startswith('AP_PERIPH_') and self.intdefines[name]:
+                self.error(f"define {name} is only valid on AP_Periph boards")
 
     def process_line_define(self, line, depth, a):
         # defines are currently written out a little haphazardly, but
@@ -581,11 +597,6 @@ class HWDef:
             probe = baro.probe
 
             n = len(devlist)+1
-
-            if driver == "DPS280":
-                # special handling for DPS280; use a probe method of
-                # the correct signature to pass into probe_spi_dev:
-                probe = "probe_280"
 
             backend_probe_method = f"AP_Baro_{driver}::{probe}"
 
