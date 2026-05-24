@@ -12,10 +12,11 @@
 ---@diagnostic disable: redundant-parameter
 
 -- Edit these variables
-local rad_xy_m = 10.0   -- circle radius in xy plane in m
-local target_speed_xy_mps = 5.0     -- maximum target speed in m/s
-local ramp_up_time_s = 10.0     -- time to reach target_speed_xy_mps in second
+local rad_xy_m = 3.0   -- circle radius in xy plane in m
+local target_speed_xy_mps = 1.0     -- maximum target speed in m/s
+local ramp_up_time_s = 3.0     -- time to reach target_speed_xy_mps in second
 local sampling_time_s = 0.05    -- sampling time of script
+local ch9_threshold = 1500
 
 -- Fixed variables
 local omega_radps = target_speed_xy_mps/rad_xy_m
@@ -56,7 +57,16 @@ function circle()
 end
 
 function update()
-    if arming:is_armed() and vehicle:get_mode() == copter_guided_mode_num and -test_start_location:z()>=5 then
+
+    local ch9_pwm = rc:get_pwm(9)
+    if not ch9_pwm then
+        return update, 1000
+    end
+
+    if arming:is_armed() and ch9_pwm > ch9_threshold then
+        vehicle:set_mode(copter_guided_mode_num)
+
+    -- if arming:is_armed() and vehicle:get_mode() == copter_guided_mode_num and -test_start_location:z()>=1.5 then
 
         -- calculate current position and velocity for circle trajectory
         local target_pos, target_vel = circle()
