@@ -1,6 +1,5 @@
 -- 1.0m離陸 -> 8の字(長方形ベース)を飛行するスクリプト
 local takeoff_alt = 1.0
-local move_dist = 2.0
 local ch9_threshold = 1500
 local copter_guided_mode_num = 4
 local dummy_origin_lat = 354000000
@@ -193,10 +192,10 @@ function update()
 
     elseif stage == 11 then
         -- 完了後は元のモードを維持
+        return update, 100
     end
 
     return update, 100
 end
 
 return update()
-

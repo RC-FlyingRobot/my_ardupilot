@@ -335,6 +335,7 @@ function update()
 
     elseif stage == 11 then
         -- 完了後は元のモードを維持
+        return update, 100
     end
 
     return update, 100
