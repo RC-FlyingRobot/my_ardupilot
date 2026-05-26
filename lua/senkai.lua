@@ -1,10 +1,10 @@
--- Commands copter to fly circle trajectory using posvel method in guided mode. 
+-- Commands copter to fly circle trajectory using posvel method in guided mode.
 -- The trajectory start from the current location
--- 
+--
 -- CAUTION: This script only works for Copter.
 -- This script start when the in GUIDED mode and above 5 meter.
---      1) arm and takeoff to above 5 m 
---      2) switch to GUIDED mode 
+--      1) arm and takeoff to above 5 m
+--      2) switch to GUIDED mode
 --      3) the vehilce will follow a circle in clockwise direction with increasing speed until ramp_up_time_s time has passed.
 --      4) switch out of and into the GUIDED mode any time to restart the trajectory from the start.
 
@@ -58,9 +58,9 @@ end
 function circle()
     local cur_freq
     -- increase target speed lineary with time until ramp_up_time_s is reached
-    if time <= ramp_up_time_s then 
+    if time <= ramp_up_time_s then
         cur_freq = omega_radps*(time/ramp_up_time_s)^2
-    else 
+    else
         cur_freq = omega_radps
     end
 
@@ -68,7 +68,7 @@ function circle()
     theta = theta + cur_freq*sampling_time_s
 
     local th_s = math.sin(theta)
-    local th_c = math.cos(theta) 
+    local th_c = math.cos(theta)
 
     local pos = Vector3f()
     pos:x(rad_xy_m*th_s)
@@ -125,15 +125,15 @@ function update()
         end
 
         -- calculate test starting location in NED
-        
-        -- local cur_loc = ahrs:get_location()        
+
+        -- local cur_loc = ahrs:get_location()
         -- if cur_loc then
-        --      test_start_location = cur_loc.get_vector_from_origin_NEU_cm(cur_loc)             
+        --      test_start_location = cur_loc.get_vector_from_origin_NEU_cm(cur_loc)
         --      if test_start_location then
-        --         test_start_location:x(test_start_location:x() * 0.01) 
-        --         test_start_location:y(test_start_location:y() * 0.01) 
-        --         test_start_location:z(-test_start_location:z() * 0.01) 
-        --      end             
+        --         test_start_location:x(test_start_location:x() * 0.01)
+        --         test_start_location:y(test_start_location:y() * 0.01)
+        --         test_start_location:z(-test_start_location:z() * 0.01)
+        --      end
         -- end
         -- これは元のコード。ahrs:get_location()はGPS用(?)緯度・経度・高度フレームを持つ位置情報
         -- GPS的な位置やHomeとの距離を扱うには便利だが、今回欲しいのはvehicle:set_target_posvel_NED(target_pos, target_vel)
