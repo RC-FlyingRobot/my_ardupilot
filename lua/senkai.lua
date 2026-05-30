@@ -49,13 +49,7 @@ end
 --- external-loop semantics where time was advanced after circle().
 --- @return Vector3f pos, Vector3f vel
 function M.circle()
-    local cur_freq
-    -- increase target speed linearly with time until ramp_up_time_s is reached
-    if time_s <= ramp_up_time_s then
-        cur_freq = omega_radps * (time_s / ramp_up_time_s) ^ 2
-    else
-        cur_freq = omega_radps
-    end
+    local cur_freq = omega_radps
 
     -- calculate circle reference position and velocity
     theta = theta + cur_freq * sampling_time_s
