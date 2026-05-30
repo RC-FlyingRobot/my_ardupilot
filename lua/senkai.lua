@@ -57,12 +57,8 @@ end
 
 function circle()
     local cur_freq
-    -- increase target speed lineary with time until ramp_up_time_s is reached
-    if time <= ramp_up_time_s then
-        cur_freq = omega_radps*(time/ramp_up_time_s)^2
-    else
-        cur_freq = omega_radps
-    end
+
+    cur_freq = omega_radps
 
     -- calculate circle reference position and velocity
     theta = theta + cur_freq*sampling_time_s
