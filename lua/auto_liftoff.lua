@@ -1,145 +1,80 @@
--- auto_liftoff.lua
--- State-machine flight script for ArduPilot Copter.
---   CH7 ON  -> GUIDED takeoff -> hover 3 s -> figure-eight circles -> auto land
---   CH7 OFF -> abort to STABILIZE at any time (except IDLE)
+-- CH7 ON  → GUIDEDモードで高度1mにホバリング (地上からの離陸 / 飛行中の高度変更 両対応)
+-- CH7 OFF → STABILIZEモードに復帰して手動操縦可能に
+-- ホバリング開始から5秒後に自動着陸
 
-local senkai = require('senkai')
+local AUTO_FLIGHT_CH    = 7      -- トリガーチャンネル番号
+local PWM_THRESHOLD     = 1800   -- スイッチONと判定するPWM値
+local HOVER_ALT_CM      = 100    -- ホバリング高度: 100 cm = 1 m (ホームから相対)
+local HOVER_DURATION_MS = 5000   -- ホバリング継続時間: 5秒
+local INTERVAL_MS       = 100    -- ループ間隔 (ms)
 
--- Constants
-local AUTO_FLIGHT_CH    = 7
-local PWM_THRESHOLD     = 1800
-local HOVER_ALT_M       = 1.0
-local HOVER_ALT_CM      = 100
-local LIFTOFF_CONFIRM_M = 0.8
-local HOVER_DURATION_MS = 3000
-local NUM_LAPS          = 2
-local INTERVAL_MS       = 100
+local copter_guided_mode    = 4  -- GUIDEDモード番号
+local copter_stabilize_mode = 0  -- STABILIZEモード番号
+local copter_land_mode      = 9  -- LANDモード番号
 
-local MODE_STABILIZE = 0
-local MODE_GUIDED    = 4
-local MODE_LAND      = 9
-
--- States
-local STATE_IDLE    = 0
-local STATE_LIFTOFF = 1
-local STATE_HOVER   = 2
-local STATE_SENKAI  = 3
-local STATE_LANDING = 4
-
--- State variables
-local state          = STATE_IDLE
+local is_active      = false
 local hover_start_ms = nil
-
--- Abort helper: reset everything and switch to STABILIZE
-local function abort_to_stabilize()
-    state          = STATE_IDLE
-    hover_start_ms = nil
-    senkai.reset()
-    vehicle:set_mode(MODE_STABILIZE)
-    gcs:send_text(6, "Auto Flight: Aborted to STABILIZE (CH7 OFF)")
-end
 
 function update()
     local pwm = rc:get_pwm(AUTO_FLIGHT_CH)
-    if not pwm then return update, INTERVAL_MS end
 
-    local switch_on = pwm > PWM_THRESHOLD
-
-    ---------- CH7 OFF guard (before any state logic) ----------
-    if state ~= STATE_IDLE and not switch_on then
-        abort_to_stabilize()
-        return update, INTERVAL_MS
-    end
-
-    ---------- STATE_IDLE ----------
-    if state == STATE_IDLE then
-        if switch_on and arming:is_armed() then
-            -- Need position fix
-            if not ahrs:get_relative_position_NED_origin() then
-                gcs:send_text(4, "Auto Flight: No position fix, waiting...")
-                return update, INTERVAL_MS
-            end
-
-            if not vehicle:set_mode(MODE_GUIDED) then
-                gcs:send_text(4, "Auto Flight: Failed to enter GUIDED mode")
-                return update, INTERVAL_MS
-            end
-
-            -- Attempt ground takeoff; fall back to set_target_location if airborne
-            if not vehicle:start_takeoff(HOVER_ALT_M) then
-                local curr_loc = ahrs:get_location()
-                if not curr_loc then
-                    gcs:send_text(4, "Auto Flight: Failed to get location")
-                    vehicle:set_mode(MODE_STABILIZE)
-                    return update, INTERVAL_MS
-                end
-
-                curr_loc.alt          = HOVER_ALT_CM
-                curr_loc.relative_alt = true
-
-                if not vehicle:set_target_location(curr_loc) then
-                    gcs:send_text(4, "Auto Flight: Failed to set target location")
-                    vehicle:set_mode(MODE_STABILIZE)
-                    return update, INTERVAL_MS
-                end
-            end
-
-            state = STATE_LIFTOFF
-            gcs:send_text(6, "Auto Flight: Liftoff commanded (CH7 ON)")
-        end
-
-    ---------- STATE_LIFTOFF ----------
-    elseif state == STATE_LIFTOFF then
-        local ned = ahrs:get_relative_position_NED_origin()
-        if ned and (-ned:z()) >= LIFTOFF_CONFIRM_M then
-            hover_start_ms = millis()
-            state = STATE_HOVER
-            gcs:send_text(6, "Auto Flight: Altitude reached, hovering 3 s")
-        end
-
-    ---------- STATE_HOVER ----------
-    elseif state == STATE_HOVER then
-        if hover_start_ms and (millis() - hover_start_ms >= HOVER_DURATION_MS) then
-            if not senkai.set_start_location() then
-                gcs:send_text(4, "Auto Flight: Position unavailable, retrying...")
-                return update, INTERVAL_MS
-            end
-            senkai.reset()
-            state = STATE_SENKAI
-            hover_start_ms = nil
-            gcs:send_text(6, "Auto Flight: Starting circle pattern")
-            -- Fall through to first circle tick below
-        end
-
-    ---------- STATE_SENKAI ----------
-    elseif state == STATE_SENKAI then
-        -- Check lap completion BEFORE computing the next step
-        if senkai.get_theta() >= NUM_LAPS * 2 * math.pi then
-            if not vehicle:set_mode(MODE_LAND) then
-                gcs:send_text(4, "Auto Flight: Failed to enter LAND mode")
-            else
-                gcs:send_text(6, "Auto Flight: Laps complete, landing")
-            end
-            state = STATE_LANDING
+    -- スイッチON & アーム済み & 未実行 → ホバリング開始
+    if switch_on and is_armed and not is_active then
+        -- GUIDEDモードには位置推定が必要なため、EKF原点からの相対位置で確認する
+        if not ahrs:get_relative_position_NED_origin() then
+            gcs:send_text(4, "Auto Hover: No position fix, waiting...")
             return update, INTERVAL_MS
         end
 
-        local pos, vel = senkai.circle()
-        if not vehicle:set_target_posvel_NED(pos + senkai.get_start_loc(), vel) then
-            gcs:send_text(4, "Auto Flight: Failed to send posvel")
+        if not vehicle:set_mode(copter_guided_mode) then
+            gcs:send_text(4, "Auto Hover: Failed to enter GUIDED mode")
+            return update, INTERVAL_MS
         end
-        return update, senkai.sampling_time_s * 1000
 
-    ---------- STATE_LANDING ----------
-    elseif state == STATE_LANDING then
-        if not arming:is_armed() then
-            state = STATE_IDLE
-            gcs:send_text(6, "Auto Flight: Landed and disarmed, resetting")
+        is_active      = true
+        hover_start_ms = millis()
+
+        -- まず地上からの離陸を試みる (飛行中の場合はfalseが返る)
+        if not vehicle:start_takeoff(1.0) then
+            -- 飛行中の場合: 現在の緯度・経度を維持しつつ高度だけ1mに変更
+            local curr_loc = ahrs:get_location()
+            if not curr_loc then
+                gcs:send_text(4, "Auto Hover: Failed to get location")
+                is_active      = false
+                hover_start_ms = nil
+                vehicle:set_mode(copter_stabilize_mode)
+                return update, INTERVAL_MS
+            end
+            
+            if not vehicle:set_target_location(curr_loc) then
+                gcs:send_text(4, "Auto Hover: Failed to set target location")
+                is_active      = false
+                hover_start_ms = nil
+                vehicle:set_mode(copter_stabilize_mode)
+                return update, INTERVAL_MS
+            end
+        end
+
+        gcs:send_text(6, "Auto Hover: Moving to 1m hover (CH7 ON)")
+
+    -- ホバリング中 → タイマー満了またはスイッチOFFで終了
+    elseif is_active then
+        if hover_start_ms and (millis() - hover_start_ms >= HOVER_DURATION_MS) then
+            -- 5秒経過で自動着陸
+            -- is_active は true のまま: CH7 が ON の間は再ホバーを防ぐ
+            hover_start_ms = nil
+            if not vehicle:set_mode(copter_land_mode) then
+                gcs:send_text(4, "Auto Hover: Failed to enter LAND mode")
+            else
+                gcs:send_text(6, "Auto Hover: Auto landing after 5s")
+            end
+        elseif not switch_on then
+            -- スイッチOFF → STABILIZEに復帰して手動操縦へ
+            is_active      = false
+            hover_start_ms = nil
+            vehicle:set_mode(copter_stabilize_mode)
+            gcs:send_text(6, "Auto Hover: STABILIZE restored (CH7 OFF)")
         end
     end
 
     return update, INTERVAL_MS
-end
-
-gcs:send_text(6, "Auto Flight Script Loaded (CH7)")
-return update()

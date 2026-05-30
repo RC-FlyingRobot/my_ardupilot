@@ -17,6 +17,7 @@ local target_speed_xy_mps = 1.0     -- maximum target speed in m/s
 local ramp_up_time_s = 3.0     -- time to reach target_speed_xy_mps in second
 local sampling_time_s = 0.05    -- sampling time of script
 local ch9_threshold = 1500
+local HOVER_ALT_CM = 200
 
 -- Fixed variables
 local omega_radps = target_speed_xy_mps/rad_xy_m
