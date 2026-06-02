@@ -16,7 +16,7 @@ local rad_xy_m = 1.5   -- circle radius in xy plane in m
 local target_speed_xy_mps = 1.0     -- maximum target speed in m/s
 local ramp_up_time_s = 3.0     -- time to reach target_speed_xy_mps in second
 local sampling_time_s = 0.05    -- sampling time of script
-local ch9_threshold = 1500
+local ch6_threshold = 1500
 local HOVER_ALT_CM = 200
 
 -- Fixed variables
@@ -89,12 +89,12 @@ end
 
 function update()
 
-    local ch9_pwm = rc:get_pwm(FIGURE_8_CH)
-    if not ch9_pwm then
+    local ch6_pwm = rc:get_pwm(FIGURE_8_CH)
+    if not ch6_pwm then
         return update, 1000
     end
 
-    if arming:is_armed() and ch9_pwm > ch9_threshold then
+    if arming:is_armed() and ch6_pwm > ch6_threshold then
         if not circle_active then
             return_mode_num = vehicle:get_mode()
             if not set_start_location() then
