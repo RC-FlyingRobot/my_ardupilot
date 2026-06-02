@@ -75,12 +75,12 @@ function circle()
 
     local pos = Vector3f()
     pos:x(2*rad_xy_m*th_s)
-    pos:y(2*rad_xy_m*th_2s/2)
+    pos:y(rad_xy_m*th_2s)
     pos:z(0)
 
     local vel = Vector3f()
-    vel:x(cur_freq*rad_xy_m*th_c)
-    vel:y(cur_freq*rad_xy_m*th_2c)
+    vel:x(cur_freq*2*rad_xy_m*th_c)
+    vel:y(cur_freq*2*rad_xy_m*th_2c)
     vel:z(0)
 
     return pos, vel
