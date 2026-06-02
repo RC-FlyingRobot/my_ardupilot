@@ -27,6 +27,7 @@ local time = 0.0
 local test_start_location = Vector3f()
 local return_mode_num = nil
 local circle_active = false
+local FIGURE_8_CH = 6
 
 gcs:send_text(0,"Script started")
 gcs:send_text(0,"Trajectory period: " .. tostring(2 * math.rad(180) / omega_radps))
@@ -88,7 +89,7 @@ end
 
 function update()
 
-    local ch9_pwm = rc:get_pwm(9)
+    local ch9_pwm = rc:get_pwm(FIGURE_8_CH)
     if not ch9_pwm then
         return update, 1000
     end
