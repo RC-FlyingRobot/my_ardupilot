@@ -16,7 +16,9 @@ local is_active      = false
 local hover_start_ms = nil
 
 function update()
-    local pwm = rc:get_pwm(AUTO_FLIGHT_CH)
+    local pwm       = rc:get_pwm(AUTO_FLIGHT_CH)
+    local switch_on = pwm and pwm >= PWM_THRESHOLD
+    local is_armed  = arming:is_armed()
 
     -- スイッチON & アーム済み & 未実行 → ホバリング開始
     if switch_on and is_armed and not is_active then
@@ -45,7 +47,7 @@ function update()
                 vehicle:set_mode(copter_stabilize_mode)
                 return update, INTERVAL_MS
             end
-            
+
             if not vehicle:set_target_location(curr_loc) then
                 gcs:send_text(4, "Auto Hover: Failed to set target location")
                 is_active      = false
@@ -78,3 +80,6 @@ function update()
     end
 
     return update, INTERVAL_MS
+end
+
+return update()
