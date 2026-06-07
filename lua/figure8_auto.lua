@@ -79,12 +79,7 @@ function circle()
     pos:y(rad_xy_m*th_2s)
     pos:z(0)
 
-    local vel = Vector3f()
-    vel:x(cur_freq*2*rad_xy_m*th_c)
-    vel:y(cur_freq*2*rad_xy_m*th_2c)
-    vel:z(0)
-
-    return pos, vel
+    return pos
 end
 
 function update()
@@ -112,15 +107,15 @@ function update()
 
     -- if arming:is_armed() and vehicle:get_mode() == copter_guided_mode_num and -test_start_location:z()>=1.5 then
 
-        -- calculate current position and velocity for circle trajectory
-        local target_pos, target_vel = circle()
+        -- calculate current position for circle trajectory
+        local target_pos = circle()
 
         -- advance the time
         time = time + sampling_time_s
 
-        -- send posvel request
-        if not vehicle:set_target_posvel_NED(target_pos+test_start_location, target_vel) then
-            gcs:send_text(0, "Failed to send target posvel at " .. tostring(time) .. " seconds")
+        -- send pos request
+        if not vehicle:set_target_pos_NED(target_pos+test_start_location, false, 0, false, 0, false, false) then
+            gcs:send_text(0, "Failed to send target pos at " .. tostring(time) .. " seconds")
         end
     else
         if circle_active then
