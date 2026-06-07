@@ -135,6 +135,17 @@ local function update_lidar_height_control()
     return true
 end
 
+-- 高度診断ログ:
+--   SNHTはスクリプトの更新周期でDataFlashログへ記録する。
+--   同じ内容の要約を1秒ごとにGCSへ送信する。
+--   Rng  : 機体の傾きを補正した下向きLiDARの対地高度 [m]
+--   Ref  : 旋回開始時に記録したLiDAR目標高度 [m]
+--   Ekf  : EKF原点基準のNED Zから求めた機体の推定高度 [m]
+--   Tgt  : ArduPilotへ指示しているNED Z目標に対応する高度 [m]
+--   Corr : 開始時のNED Zへ加えるLiDAR高度補正量 [m]
+--   Vz   : NED鉛直補正速度。正の値は下降方向 [m/s]
+--   Qual : RangeFinderの信号品質 [%]。-1は取得不可
+--   Stat : RangeFinderの状態。4はGood
 local function log_altitude(target_z_ned_m)
     local cur_pos_ned = ahrs:get_relative_position_NED_origin()
     if cur_pos_ned == nil or lidar_last_height_m == nil or lidar_target_height_m == nil then
