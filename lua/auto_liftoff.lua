@@ -48,7 +48,7 @@ function update()
 
         vehicle:start_takeoff(HOVER_ALT_M)
         stage = 1
-        gcs:send_text(6, "Auto Hover: Climbing to 1.5m")
+        gcs:send_text(6, string.format("Auto Hover: Climbing to %.2fm", HOVER_ALT_M))
 
     -- stage 1: レンジファインダーで高度到達を確認してから位置ロック
     elseif stage == 1 then
