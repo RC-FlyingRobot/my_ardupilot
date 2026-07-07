@@ -1,5 +1,4 @@
 -- 各ミッションに割り当てるプロポのチャンネル番号 (環境に合わせて変更)
-local MOTOR_FAIL_CH  = 6   -- 【優先度1】耐故障（モーター停止）テスト用スイッチ
 local FIGURE_8_CH    = 9   -- 【優先度2】8の字飛行スイッチ
 local AUTO_FLIGHT_CH   = 7   -- 自動離陸スイッチ
 
@@ -19,21 +18,16 @@ end
 
 function update()
     -- 各チャンネルのPWM値を読み取る
-    local fail_pwm  = rc:get_pwm(MOTOR_FAIL_CH)
     local fig8_pwm  = rc:get_pwm(FIGURE_8_CH)
     local auto_pwm = rc:get_pwm(AUTO_FLIGHT_CH)
     -- 値が1つでも取れなければ何もしない(すべてのスイッチの接続確認)
-    if not fail_pwm or not fig8_pwm or not auto_pwm then
+    if fig8_pwm or not auto_pwm then
         return update, 100
     end
 
     -- if, elseif を使って、優先順位を決めて判定
-    -- 【優先度1】耐故障テスト (緑 / Green)
-    if fail_pwm > 1800 then
-        set_led_color(0, 50, 0)
-        
     -- 【優先度2】8の字飛行 (青 / Blue)
-    elseif fig8_pwm > 1800 then
+    if fig8_pwm > 1800 then
         set_led_color(0, 0, 50)
         
     -- 【優先度3】自動離陸 (紫 / Purple)
