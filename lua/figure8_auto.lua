@@ -16,7 +16,8 @@ local rad_xy_m = 1.5   -- circle radius in xy plane in m
 local target_speed_xy_mps = 1.0     -- maximum target speed in m/s
 local ramp_up_time_s = 3.0     -- time to reach target_speed_xy_mps in second
 local sampling_time_s = 0.05    -- sampling time of script
-local ch9_threshold = 1500
+local ch6_threshold = 1500
+local HOVER_ALT_CM = 200
 
 -- Fixed variables
 local omega_radps = target_speed_xy_mps/rad_xy_m
@@ -26,6 +27,7 @@ local time = 0.0
 local test_start_location = Vector3f()
 local return_mode_num = nil
 local circle_active = false
+local FIGURE_8_CH = 6
 
 gcs:send_text(0,"Script started")
 gcs:send_text(0,"Trajectory period: " .. tostring(2 * math.rad(180) / omega_radps))
@@ -56,22 +58,30 @@ local function set_start_location()
 end
 
 function circle()
-    local cur_freq = omega_radps
-    
+    local cur_freq
+    -- increase target speed lineary with time until ramp_up_time_s is reached
+    if time <= ramp_up_time_s then
+        cur_freq = omega_radps*(time/ramp_up_time_s)^2
+    else
+        cur_freq = omega_radps
+    end
+
     -- calculate circle reference position and velocity
     theta = theta + cur_freq*sampling_time_s
 
     local th_s = math.sin(theta)
     local th_c = math.cos(theta)
+    local th_2s = math.sin(2*theta)
+    local th_2c = math.cos(2*theta)
 
     local pos = Vector3f()
-    pos:x(rad_xy_m*th_s)
-    pos:y(-rad_xy_m*(th_c-1))
+    pos:x(2*rad_xy_m*th_s)
+    pos:y(rad_xy_m*th_2s)
     pos:z(0)
 
     local vel = Vector3f()
-    vel:x(cur_freq*rad_xy_m*th_c)
-    vel:y(cur_freq*rad_xy_m*th_s)
+    vel:x(cur_freq*2*rad_xy_m*th_c)
+    vel:y(cur_freq*2*rad_xy_m*th_2c)
     vel:z(0)
 
     return pos, vel
@@ -79,12 +89,12 @@ end
 
 function update()
 
-    local ch9_pwm = rc:get_pwm(9)
-    if not ch9_pwm then
+    local ch6_pwm = rc:get_pwm(FIGURE_8_CH)
+    if not ch6_pwm then
         return update, 1000
     end
 
-    if arming:is_armed() and ch9_pwm > ch9_threshold then
+    if arming:is_armed() and ch6_pwm > ch6_threshold then
         if not circle_active then
             return_mode_num = vehicle:get_mode()
             if not set_start_location() then

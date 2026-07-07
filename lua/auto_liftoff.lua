@@ -1,4 +1,3 @@
--- auto_liftoff.lua
 -- CH7 ON  → GUIDEDモードで高度1mにホバリング (地上からの離陸 / 飛行中の高度変更 両対応)
 -- CH7 OFF → STABILIZEモードに復帰して手動操縦可能に
 -- ホバリング開始から5秒後に自動着陸
@@ -18,10 +17,6 @@ local hover_start_ms = nil
 
 function update()
     local pwm = rc:get_pwm(AUTO_FLIGHT_CH)
-    if not pwm then return update, INTERVAL_MS end
-
-    local switch_on = pwm > PWM_THRESHOLD
-    local is_armed  = arming:is_armed()
 
     -- スイッチON & アーム済み & 未実行 → ホバリング開始
     if switch_on and is_armed and not is_active then
@@ -50,10 +45,7 @@ function update()
                 vehicle:set_mode(copter_stabilize_mode)
                 return update, INTERVAL_MS
             end
-
-            curr_loc.alt          = HOVER_ALT_CM
-            curr_loc.relative_alt = true
-
+            
             if not vehicle:set_target_location(curr_loc) then
                 gcs:send_text(4, "Auto Hover: Failed to set target location")
                 is_active      = false
@@ -86,7 +78,3 @@ function update()
     end
 
     return update, INTERVAL_MS
-end
-
-gcs:send_text(6, "Auto Hover Script Loaded (CH7)")
-return update()
