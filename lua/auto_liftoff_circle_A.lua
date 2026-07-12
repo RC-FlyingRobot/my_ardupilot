@@ -23,6 +23,9 @@ local TAKEOFF_ALT_M      = 1.5    -- 離陸目標高度 [m]
 local HOVER_DURATION_MS  = 3000   -- ホバー継続時間 [ms]
 local INTERVAL_MS        = 50     -- ループ間隔 [ms]  (= circle.sampling_time_s * 1000)
 
+local ALT_TOLERANCE_M    = 0.2    -- 高度到達判定の許容誤差 [m]
+local RF_ORIENT_DOWN     = 25     -- 下向きレンジファインダーの向き番号
+
 local GUIDED_MODE    = 4
 local STABILIZE_MODE = 0
 local LAND_MODE      = 9
@@ -38,6 +41,7 @@ local state              = STATE_IDLE
 local hover_start_ms     = nil
 local circle_start_ms    = nil
 local circle_duration_ms = nil   -- 1周分のミリ秒 (初回旋回開始時に確定)
+local land_fail_count    = 0
 
 gcs:send_text(0, "AutoFlight-A: script loaded")
 
@@ -45,6 +49,19 @@ function update()
     local pwm      = rc:get_pwm(TRIGGER_CH)
     local switch_on = pwm and pwm >= PWM_THRESHOLD
     local is_armed  = arming:is_armed()
+
+    -- スイッチOFF または 解除 → 状態リセット
+    if not switch_on or not is_armed then
+        if state ~= STATE_IDLE then
+            vehicle:set_mode(STABILIZE_MODE)
+            gcs:send_text(6, "AutoFlight-A: STABILIZE restored (switch OFF)")
+        end
+        state            = STATE_IDLE
+        hover_start_ms   = nil
+        circle_start_ms  = nil
+        land_fail_count  = 0
+        return update, INTERVAL_MS
+    end
 
     -- STATE_IDLE: CH7 ON + アームで離陸シーケンス開始
     if state == STATE_IDLE then
@@ -66,13 +83,23 @@ function update()
             state = STATE_TAKEOFF
         end
 
-    -- STATE_TAKEOFF: 目標高度の 90% に達したらホバーへ
+    -- STATE_TAKEOFF: 目標高度に達したらホバーへ
     elseif state == STATE_TAKEOFF then
-        local pos = ahrs:get_relative_position_NED_origin()
-        if pos and -pos:z() >= TAKEOFF_ALT_M * 0.9 then
-            hover_start_ms = millis()
-            gcs:send_text(6, "AutoFlight-A: Hovering 3s")
-            state = STATE_HOVER
+        if rangefinder:has_data_orient(RF_ORIENT_DOWN) then
+            local current_alt = rangefinder:distance_orient(RF_ORIENT_DOWN)
+            if math.abs(current_alt - TAKEOFF_ALT_M) < ALT_TOLERANCE_M then
+                hover_start_ms = millis()
+                gcs:send_text(6, string.format("AutoFlight-A: Reached %.2fm, hovering 3s", current_alt))
+                state = STATE_HOVER
+            end
+        else
+            -- AHRS フォールバック: 90% 到達で遷移
+            local pos = ahrs:get_relative_position_NED_origin()
+            if pos and -pos:z() >= TAKEOFF_ALT_M * 0.9 then
+                hover_start_ms = millis()
+                gcs:send_text(6, "AutoFlight-A: Hovering 3s (AHRS fallback)")
+                state = STATE_HOVER
+            end
         end
 
     -- STATE_HOVER: 3秒待って旋回へ
@@ -97,9 +124,17 @@ function update()
         if millis() - circle_start_ms >= circle_duration_ms then
             if vehicle:set_mode(LAND_MODE) then
                 gcs:send_text(6, "AutoFlight-A: Circle done, landing")
+                land_fail_count = 0
                 state = STATE_LAND
             else
-                gcs:send_text(4, "AutoFlight-A: Cannot enter LAND mode")
+                land_fail_count = land_fail_count + 1
+                gcs:send_text(4, string.format("AutoFlight-A: Cannot enter LAND mode (%d)", land_fail_count))
+                if land_fail_count >= 5 then
+                    vehicle:set_mode(STABILIZE_MODE)
+                    gcs:send_text(4, "AutoFlight-A: LAND failed 5x, STABILIZE fallback")
+                    land_fail_count = 0
+                    state = STATE_IDLE
+                end
             end
         else
             local tgt_pos, tgt_vel = circle.step()
@@ -108,7 +143,7 @@ function update()
             end
         end
 
-    -- STATE_LAND: ディスアームしたらアイドルへリセット
+    -- STATE_LAND: ディスアームまたはスイッチOFFをガードに委任して待機
     elseif state == STATE_LAND then
         if not is_armed then
             state = STATE_IDLE
