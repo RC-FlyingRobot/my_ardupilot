@@ -44,6 +44,7 @@ local STATE_LAND    = 4
 local state           = STATE_IDLE
 local hover_start_ms  = nil
 local circle_start_ms = nil
+local takeoff_start_z = nil
 local land_fail_count = 0
 local switch_off_count  = 0
 local alt_confirm_count = 0
@@ -60,6 +61,18 @@ local function set_circle_origin()
     circle_origin:y(pos:y())
     circle_origin:z(pos:z())
     return true
+end
+
+-- Return altitude gained since takeoff, falling back to rangefinder AGL.
+local function get_takeoff_altitude()
+    local pos = ahrs:get_relative_position_NED_origin()
+    if pos and takeoff_start_z then
+        return takeoff_start_z - pos:z(), "NED"
+    end
+    if rangefinder:has_data_orient(RF_ORIENT_DOWN) then
+        return rangefinder:distance_orient(RF_ORIENT_DOWN), "rangefinder"
+    end
+    return nil, nil
 end
 
 -- 実経過時間に対応する絶対 NED 位置と速度を返す
@@ -121,6 +134,7 @@ function update()
         state             = STATE_IDLE
         hover_start_ms    = nil
         circle_start_ms   = nil
+        takeoff_start_z   = nil
         theta             = 0.0
         land_fail_count   = 0
         switch_off_count  = 0
@@ -133,7 +147,8 @@ function update()
     -- STATE_IDLE: CH7 ON + アームで離陸シーケンス開始
     if state == STATE_IDLE then
         if switch_on and is_armed then
-            if not ahrs:get_relative_position_NED_origin() then
+            local takeoff_pos = ahrs:get_relative_position_NED_origin()
+            if not takeoff_pos then
                 gcs:send_text(4, "AutoFlight-B: No position fix, waiting...")
                 return update, INTERVAL_MS
             end
@@ -146,39 +161,25 @@ function update()
                 vehicle:set_mode(STABILIZE_MODE)
                 return update, INTERVAL_MS
             end
+            takeoff_start_z = takeoff_pos:z()
             gcs:send_text(6, string.format("AutoFlight-B: Takeoff to %.1fm", TAKEOFF_ALT_M))
             state = STATE_TAKEOFF
         end
 
     -- STATE_TAKEOFF: 目標高度に達したらホバーへ
     elseif state == STATE_TAKEOFF then
-        if rangefinder:has_data_orient(RF_ORIENT_DOWN) then
-            local current_alt = rangefinder:distance_orient(RF_ORIENT_DOWN)
-            if math.abs(current_alt - TAKEOFF_ALT_M) < ALT_TOLERANCE_M then
-                alt_confirm_count = alt_confirm_count + 1
-                if alt_confirm_count >= ALT_CONFIRM_CNT then
-                    alt_confirm_count = 0
-                    hover_start_ms = millis()
-                    gcs:send_text(6, string.format("AutoFlight-B: Reached %.2fm, hovering 3s", current_alt))
-                    state = STATE_HOVER
-                end
-            else
+        local current_alt, altitude_source = get_takeoff_altitude()
+        if current_alt and current_alt >= TAKEOFF_ALT_M - ALT_TOLERANCE_M then
+            alt_confirm_count = alt_confirm_count + 1
+            if alt_confirm_count >= ALT_CONFIRM_CNT then
                 alt_confirm_count = 0
+                hover_start_ms = millis()
+                gcs:send_text(6, string.format(
+                    "AutoFlight-B: Reached %.2fm (%s), hovering 3s", current_alt, altitude_source))
+                state = STATE_HOVER
             end
         else
-            -- AHRS フォールバック: 90% 到達で遷移
-            local pos = ahrs:get_relative_position_NED_origin()
-            if pos and -pos:z() >= TAKEOFF_ALT_M * 0.9 then
-                alt_confirm_count = alt_confirm_count + 1
-                if alt_confirm_count >= ALT_CONFIRM_CNT then
-                    alt_confirm_count = 0
-                    hover_start_ms = millis()
-                    gcs:send_text(6, "AutoFlight-B: Hovering 3s (AHRS fallback)")
-                    state = STATE_HOVER
-                end
-            else
-                alt_confirm_count = 0
-            end
+            alt_confirm_count = 0
         end
 
     -- STATE_HOVER: 3秒待って旋回へ
