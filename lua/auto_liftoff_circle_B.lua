@@ -21,10 +21,10 @@ local INTERVAL_MS        = 50     -- ループ間隔 [ms]
 local RAD_XY_M         = 1.5    -- 旋回半径 [m]
 local TARGET_SPEED_MPS = 1.0    -- 接線速度 [m/s]
 local OMEGA_RADPS      = TARGET_SPEED_MPS / RAD_XY_M
-local SAMPLING_TIME_S  = INTERVAL_MS / 1000.0
 local REVOLUTION_MS    = (2 * math.pi / OMEGA_RADPS) * 1000  -- 1周のミリ秒
 
 local ALT_TOLERANCE_M    = 0.2    -- 高度到達判定の許容誤差 [m]
+local CIRCLE_END_TOLERANCE_M = 0.3 -- 旋回開始位置への到達許容誤差 [m]
 local RF_ORIENT_DOWN     = 25     -- 下向きレンジファインダーの向き番号
 
 local GUIDED_MODE    = 4
@@ -62,9 +62,9 @@ local function set_circle_origin()
     return true
 end
 
--- theta を 1 ステップ進め、絶対 NED 位置を返す
-local function circle_step()
-    theta = theta + OMEGA_RADPS * SAMPLING_TIME_S
+-- 実経過時間に対応する絶対 NED 位置と速度を返す
+local function circle_step(elapsed_ms)
+    theta = math.min(OMEGA_RADPS * elapsed_ms / 1000.0, 2 * math.pi)
 
     local th_s = math.sin(theta)
     local th_c = math.cos(theta)
@@ -74,11 +74,31 @@ local function circle_step()
     pos:y(-RAD_XY_M * (th_c - 1))
     pos:z(0)   -- 相対高度 0 を保持し続けることで高度を固定
 
+    local vel = Vector3f()
+    if elapsed_ms < REVOLUTION_MS then
+        vel:x(TARGET_SPEED_MPS * th_c)
+        vel:y(TARGET_SPEED_MPS * th_s)
+    else
+        vel:x(0)
+        vel:y(0)
+    end
+    vel:z(0)
+
     local abs_pos = Vector3f()
     abs_pos:x(pos:x() + circle_origin:x())
     abs_pos:y(pos:y() + circle_origin:y())
     abs_pos:z(pos:z() + circle_origin:z())   -- = circle_origin:z() で旋回開始時の高度に固定
-    return abs_pos
+    return abs_pos, vel
+end
+
+local function circle_endpoint_reached()
+    local pos = ahrs:get_relative_position_NED_origin()
+    if not pos then
+        return false
+    end
+    local north_error = pos:x() - circle_origin:x()
+    local east_error = pos:y() - circle_origin:y()
+    return math.sqrt(north_error * north_error + east_error * east_error) <= CIRCLE_END_TOLERANCE_M
 end
 
 gcs:send_text(0, "AutoFlight-B: script loaded")
@@ -177,7 +197,13 @@ function update()
 
     -- STATE_CIRCLE: 1周分の時間が経過したら着陸へ
     elseif state == STATE_CIRCLE then
-        if millis() - circle_start_ms >= REVOLUTION_MS then
+        local circle_elapsed_ms = millis() - circle_start_ms
+        local tgt_pos, tgt_vel = circle_step(circle_elapsed_ms)
+        if not vehicle:set_target_posvel_NED(tgt_pos, tgt_vel) then
+            gcs:send_text(0, "AutoFlight-B: set_target_posvel_NED failed")
+        end
+
+        if circle_elapsed_ms >= REVOLUTION_MS and circle_endpoint_reached() then
             if vehicle:set_mode(LAND_MODE) then
                 gcs:send_text(6, "AutoFlight-B: Circle done, landing")
                 land_fail_count = 0
@@ -191,11 +217,6 @@ function update()
                     land_fail_count = 0
                     state = STATE_IDLE
                 end
-            end
-        else
-            local tgt_pos = circle_step()
-            if not vehicle:set_target_pos_NED(tgt_pos, false, 0, false, 0, false, false) then
-                gcs:send_text(0, "AutoFlight-B: set_target_pos_NED failed")
             end
         end
 
@@ -213,7 +234,7 @@ end
 return update()
 
 
-/*
+--[[
 2026/06/14 13:51:14 : AutoFlight-B: STABILIZE restored (switch OFF)
 2026/06/14 13:51:09 : AutoFlight-B: Circle done, landing
 2026/06/14 13:51:00 : AutoFlight-B: Circle start (r=1.5m, 9.4s)
@@ -226,4 +247,4 @@ return update()
 2026/06/14 13:50:48 : Mode change to Guided failed: requires position
 2026/06/14 13:49:44 : EKF3 IMU0 fusing optical flow
 2026/06/14 13:49:44 : EKF3 IMU0 started relative aiding
-*/
+]]
