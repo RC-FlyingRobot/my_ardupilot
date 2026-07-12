@@ -30,6 +30,9 @@ local RF_ORIENT_DOWN     = 25     -- 下向きレンジファインダーの向�
 local GUIDED_MODE    = 4
 local STABILIZE_MODE = 0
 local LAND_MODE      = 9
+
+local SWITCH_DEBOUNCE_CNT = 3   -- 3 * 50ms = 150ms
+local ALT_CONFIRM_CNT     = 5   -- 5 * 50ms = 250ms
 -- --------------------------------------------------------------------------
 
 local STATE_IDLE    = 0
@@ -42,6 +45,8 @@ local state           = STATE_IDLE
 local hover_start_ms  = nil
 local circle_start_ms = nil
 local land_fail_count = 0
+local switch_off_count  = 0
+local alt_confirm_count = 0
 
 -- 旋回変数
 local theta          = 0.0
@@ -57,28 +62,23 @@ local function set_circle_origin()
     return true
 end
 
--- theta を 1 ステップ進め、絶対 NED 位置と速度を返す (senkai.lua の circle() と同等)
+-- theta を 1 ステップ進め、絶対 NED 位置を返す
 local function circle_step()
     theta = theta + OMEGA_RADPS * SAMPLING_TIME_S
 
     local th_s = math.sin(theta)
     local th_c = math.cos(theta)
 
-    local rel_pos = Vector3f()
-    rel_pos:x(RAD_XY_M * th_s)
-    rel_pos:y(-RAD_XY_M * (th_c - 1))
-    rel_pos:z(0)
-
-    local vel = Vector3f()
-    vel:x(OMEGA_RADPS * RAD_XY_M * th_c)
-    vel:y(OMEGA_RADPS * RAD_XY_M * th_s)
-    vel:z(0)
+    local pos = Vector3f()
+    pos:x(RAD_XY_M * th_s)
+    pos:y(-RAD_XY_M * (th_c - 1))
+    pos:z(0)   -- 相対高度 0 を保持し続けることで高度を固定
 
     local abs_pos = Vector3f()
-    abs_pos:x(rel_pos:x() + circle_origin:x())
-    abs_pos:y(rel_pos:y() + circle_origin:y())
-    abs_pos:z(rel_pos:z() + circle_origin:z())
-    return abs_pos, vel
+    abs_pos:x(pos:x() + circle_origin:x())
+    abs_pos:y(pos:y() + circle_origin:y())
+    abs_pos:z(pos:z() + circle_origin:z())   -- = circle_origin:z() で旋回開始時の高度に固定
+    return abs_pos
 end
 
 gcs:send_text(0, "AutoFlight-B: script loaded")
@@ -88,18 +88,26 @@ function update()
     local switch_on = pwm and pwm >= PWM_THRESHOLD
     local is_armed  = arming:is_armed()
 
-    -- スイッチOFF または 解除 → 状態リセット
+    -- スイッチOFF または 解除 → デバウンス後に状態リセット
     if not switch_on or not is_armed then
+        switch_off_count = switch_off_count + 1
+        if switch_off_count < SWITCH_DEBOUNCE_CNT then
+            return update, INTERVAL_MS
+        end
         if state ~= STATE_IDLE then
             vehicle:set_mode(STABILIZE_MODE)
             gcs:send_text(6, "AutoFlight-B: STABILIZE restored (switch OFF)")
         end
-        state           = STATE_IDLE
-        hover_start_ms  = nil
-        circle_start_ms = nil
-        theta           = 0.0
-        land_fail_count = 0
+        state             = STATE_IDLE
+        hover_start_ms    = nil
+        circle_start_ms   = nil
+        theta             = 0.0
+        land_fail_count   = 0
+        switch_off_count  = 0
+        alt_confirm_count = 0
         return update, INTERVAL_MS
+    else
+        switch_off_count = 0
     end
 
     -- STATE_IDLE: CH7 ON + アームで離陸シーケンス開始
@@ -127,17 +135,29 @@ function update()
         if rangefinder:has_data_orient(RF_ORIENT_DOWN) then
             local current_alt = rangefinder:distance_orient(RF_ORIENT_DOWN)
             if math.abs(current_alt - TAKEOFF_ALT_M) < ALT_TOLERANCE_M then
-                hover_start_ms = millis()
-                gcs:send_text(6, string.format("AutoFlight-B: Reached %.2fm, hovering 3s", current_alt))
-                state = STATE_HOVER
+                alt_confirm_count = alt_confirm_count + 1
+                if alt_confirm_count >= ALT_CONFIRM_CNT then
+                    alt_confirm_count = 0
+                    hover_start_ms = millis()
+                    gcs:send_text(6, string.format("AutoFlight-B: Reached %.2fm, hovering 3s", current_alt))
+                    state = STATE_HOVER
+                end
+            else
+                alt_confirm_count = 0
             end
         else
             -- AHRS フォールバック: 90% 到達で遷移
             local pos = ahrs:get_relative_position_NED_origin()
             if pos and -pos:z() >= TAKEOFF_ALT_M * 0.9 then
-                hover_start_ms = millis()
-                gcs:send_text(6, "AutoFlight-B: Hovering 3s (AHRS fallback)")
-                state = STATE_HOVER
+                alt_confirm_count = alt_confirm_count + 1
+                if alt_confirm_count >= ALT_CONFIRM_CNT then
+                    alt_confirm_count = 0
+                    hover_start_ms = millis()
+                    gcs:send_text(6, "AutoFlight-B: Hovering 3s (AHRS fallback)")
+                    state = STATE_HOVER
+                end
+            else
+                alt_confirm_count = 0
             end
         end
 
@@ -173,9 +193,9 @@ function update()
                 end
             end
         else
-            local tgt_pos, tgt_vel = circle_step()
-            if not vehicle:set_target_posvel_NED(tgt_pos, tgt_vel) then
-                gcs:send_text(0, "AutoFlight-B: set_target_posvel_NED failed")
+            local tgt_pos = circle_step()
+            if not vehicle:set_target_pos_NED(tgt_pos, false, 0, false, 0, false, false) then
+                gcs:send_text(0, "AutoFlight-B: set_target_pos_NED failed")
             end
         end
 
@@ -191,3 +211,19 @@ function update()
 end
 
 return update()
+
+
+/*
+2026/06/14 13:51:14 : AutoFlight-B: STABILIZE restored (switch OFF)
+2026/06/14 13:51:09 : AutoFlight-B: Circle done, landing
+2026/06/14 13:51:00 : AutoFlight-B: Circle start (r=1.5m, 9.4s)
+2026/06/14 13:50:57 : AutoFlight-B: Reached 1.41m, hovering 3s
+2026/06/14 13:50:55 : AutoFlight-B: Takeoff to 1.5m
+2026/06/14 13:50:55 : AutoFlight-B: Cannot enter GUIDED
+2026/06/14 13:50:55 : Mode change to Guided failed: requires position
+...
+2026/06/14 13:50:48 : AutoFlight-B: Cannot enter GUIDED
+2026/06/14 13:50:48 : Mode change to Guided failed: requires position
+2026/06/14 13:49:44 : EKF3 IMU0 fusing optical flow
+2026/06/14 13:49:44 : EKF3 IMU0 started relative aiding
+*/
