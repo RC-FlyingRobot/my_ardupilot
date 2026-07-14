@@ -21,7 +21,7 @@ function update()
     local fig8_pwm  = rc:get_pwm(FIGURE_8_CH)
     local auto_pwm = rc:get_pwm(AUTO_FLIGHT_CH)
     -- 値が1つでも取れなければ何もしない(すべてのスイッチの接続確認)
-    if fig8_pwm or not auto_pwm then
+    if not fig8_pwm or not auto_pwm then
         return update, 100
     end
 
