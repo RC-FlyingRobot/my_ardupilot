@@ -1,276 +1,390 @@
-# figure8_auto.lua 読解メモ
+# figure8_auto.lua コード解説
 
 ## 概要
-`figure8_auto.lua` は、ArduPilot Copter 用の Lua スクリプトです。  
-RC 6ch をトリガーにして機体を `GUIDED` モードへ切り替え、EKF origin 基準の `NED` 座標系で目標位置・目標速度を継続送信し、開始位置を基準とした 8 の字軌道を飛ばします。
 
-このスクリプトは、あらかじめ用意されたミッションを実行するものではなく、Lua からリアルタイムに軌道を生成して Guided 制御へ流し込むタイプのスクリプトです。
+**figure8_auto.lua** は、ArduPilot Copterを2つの接する円で構成した8の字軌道に沿って飛行させるLuaスクリプトです。
+
+RC 6chをトリガーとして機体を **GUIDED** モードへ切り替え、開始地点を基準にした目標位置と目標速度を50 ms周期で生成し、**vehicle:set_target_posvel_NED()** へ送信します。
+
+ミッションのウェイポイントを順番に通過する方式ではなく、Lua側で連続的に軌道を生成する方式です。
 
 ## このファイルの責務
-このファイルの責務は主に次の4つです。
 
-- RC スイッチによる開始・停止判定
-- 開始時の基準位置の保存
-- 8 の字軌道の位置・速度生成
-- `GUIDED` モードへの切り替えと解除時の元モード復帰
+- RC 6chによる8の字飛行の開始・停止判定
+- 開始時のEKF origin基準NED位置の保存
+- 接する2円からなる目標位置・目標速度の生成
+- GUIDEDモードへの切り替え
+- 停止時の元モード復帰
+- 停止後の位相と経過時間のリセット
 
-## 全体の流れ
-1. スクリプト起動時に半径、目標速度、立ち上がり時間、サンプリング周期などを設定する
-2. `update()` が一定周期で呼ばれる
-3. RC 6ch の PWM が閾値を超え、かつ機体がアーム済みなら開始処理に入る
-4. 開始時に現在位置を `test_start_location` として保存する
-5. `GUIDED` モードへ切り替える
-6. `circle()` で 8 の字軌道上の次の目標位置・目標速度を計算する
-7. `vehicle:set_target_posvel_NED()` で Copter の Guided 制御へ送る
-8. スイッチ OFF または非アーム状態になると元のモードへ戻し、内部状態をリセットする
+クラス定義はなく、関数とスクリプト内の状態変数で構成されています。
 
-## 主要な変数
-- `rad_xy_m`
-  - 8 の字のスケールを決める基本半径
-- `target_speed_xy_mps`
-  - 目標速度
-- `ramp_up_time_s`
-  - 最高速まで滑らかに立ち上げる時間
-- `sampling_time_s`
-  - 制御ループの周期
-- `omega_radps`
-  - 基本の進行速度係数
-- `theta`
-  - 軌道上の位相
-- `time`
-  - ランプアップ用の経過時間
-- `test_start_location`
-  - 開始時の絶対位置。EKF origin 基準の NED 座標
-- `return_mode_num`
-  - 開始前の flight mode
-- `circle_active`
-  - 実行中かどうかを表すフラグ
+## 軌道の全体像
+
+現在の8の字は、リサージュ曲線ではありません。開始地点を共通の接点として、NEDの東側と西側に同じ半径の円を1つずつ配置しています。
+
+~~~text
+                              North (+x)
+                                   ^
+                      .-----.      |      .-----.
+                   .-'       '-.   |   .-'       '-.
+West (-y) <-------( second circle )-o-( first circle )-------> East (+y)
+                   '-.       .-'   |   '-.       .-'
+                      '-----'      |      '-----'
+                                   |
+                                   o = start / contact point
+~~~
+
+- 第1円の中心: 開始地点から東へ **rad_xy_m**
+- 第2円の中心: 開始地点から西へ **rad_xy_m**
+- 両方の円の半径: **rad_xy_m**
+- 2円の接点: 開始地点
+
+## 設定値
+
+### rad_xy_m
+
+各円の半径です。現在値は **1.5 m** です。
+
+この値では軌道範囲が次のようになります。
+
+- North方向: -1.5 m から +1.5 m
+- East方向: -3.0 m から +3.0 m
+- 軌道全体: 約 3 m x 6 m
+
+### target_speed_xy_mps
+
+円周上の目標速度です。現在値は **1.0 m/s** です。
+
+円軌道では、
+
+~~~text
+速度 = 半径 x 角速度
+~~~
+
+なので、角速度は次の式で求めています。
+
+~~~lua
+omega_radps = target_speed_xy_mps / rad_xy_m
+~~~
+
+リサージュ曲線だった旧実装と異なり、現在は設定値と円周上の速度が一致します。
+
+### sampling_time_s
+
+**update()** の呼び出し間隔として要求する時間です。現在値は **0.05 s**、つまり50 msです。
+
+### ch6_threshold
+
+RC 6chをONと判定するPWM閾値です。現在値は **1500** です。
+
+## 主な状態変数
+
+### theta
+
+現在飛んでいる円の角度です。0から2piまで進み、1周すると2piを引いて0付近へ戻します。
+
+### circle_direction
+
+現在飛んでいる円が開始地点のどちら側にあるかを表します。
+
+- **1**: 第1円。Y成分が正側
+- **-1**: 第2円。Y成分が負側
+
+**theta** が1周するたびに符号を反転するため、第1円と第2円を交互に飛びます。
+
+### test_start_location
+
+8の字を開始した地点です。
+
+これは機体から見た相対位置ではなく、EKF originを原点とするNED絶対座標です。
+
+### return_mode_num
+
+8の字開始前のflight modeを保存します。停止時にこのモードへ戻します。
+
+### figure8_active
+
+8の字飛行を実行中かどうかを示します。
 
 ## 主要な関数
-このファイルにクラス定義はありません。関数中心の構成です。
 
-### `restore_return_mode(reason)`
-開始前の flight mode を `return_mode_num` から復元します。  
-スクリプトが `GUIDED` に切り替えたあと、停止時に元のモードへ戻すための後始末です。
+### restore_return_mode(reason)
 
-役割:
-- 元モードの復帰
-- 復帰成功・失敗の GCS 通知
-- `return_mode_num` のクリア
+開始前に保存したflight modeへ戻します。
 
-### `set_start_location()`
-現在位置を `ahrs:get_relative_position_NED_origin()` から取得して、`test_start_location` に保存します。  
-ここで保存しているのは、緯度経度ベースの `Location` ではなく、EKF origin 基準の `NED` 位置です。
+1. **return_mode_num** が未設定なら何もしない
+2. **vehicle:set_mode(return_mode_num)** を呼ぶ
+3. 成功または失敗をGCSへ通知する
+4. **return_mode_num** をクリアする
 
-役割:
-- Guided の `set_target_posvel_NED()` にそのまま使える座標系で現在位置を取る
-- 8 の字軌道の基準点を固定する
+### set_start_location()
 
-### `circle()`
-名前は `circle` ですが、実際に作っているのは円ではなく 8 の字軌道です。  
-位相 `theta` を少しずつ進めながら、その時点の位置 `pos` と速度 `vel` を返します。
+**ahrs:get_relative_position_NED_origin()** から現在位置を取得し、**test_start_location** に保存します。
 
-役割:
-- 軌道位相の更新
-- 8 の字の相対位置生成
-- その位置に対応する相対速度生成
+保存する値の意味は次のとおりです。
 
-### `update()`
-メインループです。  
-RC 入力の確認、開始処理、軌道指令の送信、停止処理、内部状態のリセットまで、この関数が担当します。
+~~~text
+x: EKF originから北方向の距離 [m]
+y: EKF originから東方向の距離 [m]
+z: EKF originから下方向の距離 [m]
+~~~
 
-役割:
-- RC 6ch の監視
-- 開始条件判定
-- `GUIDED` への遷移
-- `circle()` による軌道生成
-- `set_target_posvel_NED()` の送信
-- 停止時の元モード復帰と変数リセット
+位置を取得できなければfalse、保存できればtrueを返します。
 
-## `update()` の1ループ
-`update()` の1回の処理は大きく3パターンに分かれます。
+### figure8_target()
 
-### 1. 開始前または開始直後
-- `rc:get_pwm(6)` を読む
-- `arming:is_armed()` と PWM 閾値を確認する
-- まだ `circle_active == false` なら開始処理に入る
-- 現在モードを `return_mode_num` に保存する
-- `set_start_location()` で開始位置を固定する
-- `vehicle:set_mode(4)` で `GUIDED` に入る
-- `circle_active = true` にする
-- その同じループで `circle()` を呼び、最初の位置・速度指令を送る
+現在の **theta** と **circle_direction** から、開始地点を原点とする相対目標位置 **pos** とNED目標速度 **vel** を生成します。
 
-### 2. 実行中
-- 開始処理はスキップ
-- `circle()` を呼び、現在の `theta` と `time` から相対位置・相対速度を作る
-- `time` を `sampling_time_s` だけ進める
-- `vehicle:set_target_posvel_NED(target_pos + test_start_location, target_vel)` を送る
-- 50ms 後に次の `update()` が呼ばれる
+処理は次の順番です。
 
-### 3. 停止時
-- RC スイッチ OFF または非アーム状態で停止側に入る
-- `circle_active == true` なら `restore_return_mode()` を呼んで元モードへ戻す
-- `circle_active = false`
-- `set_start_location()` で現在地を次回開始用の基準に更新する
-- `time = 0`, `theta = 0` に戻す
+1. 一定角速度 **omega_radps** で **theta** を進める
+2. **theta** が2pi以上なら1周分を引く
+3. 1周したときだけ **circle_direction** の符号を反転する
+4. **senkai.lua** と同じ円軌道の位置と速度を計算する
 
-## `circle()` が作る 8 の字
-`circle()` の本質は次の式です。
+### update()
 
-- `x = 2r * sin(theta)`
-- `y = r * sin(2theta)`
+スクリプトのメインループです。
 
-ここで `r = rad_xy_m` です。  
-`x` は 1周期で左右に1回振れ、`y` は 1周期で上下に2回振れるため、軌跡が 8 の字になります。
+RC入力、開始処理、軌道指令の送信、停止処理を担当し、最後に次回の実行間隔を返します。
 
-位置ベクトル:
-- `pos.x = 2r * sin(theta)`
-- `pos.y = r * sin(2theta)`
-- `pos.z = 0`
+## 第1円の数式
 
-速度ベクトル:
-- `vel.x = 2r * cur_freq * cos(theta)`
-- `vel.y = 2r * cur_freq * cos(2theta)`
-- `vel.z = 0`
+**circle_direction = 1** のときに第1円を描きます。
 
-`cur_freq` は序盤だけ小さく、時間とともに増えます。  
-そのため、開始直後はゆっくり、徐々に目標速度へ近づく滑らかな立ち上がりになります。
+位置:
 
-## `circle()` が返す `pos`, `vel` の意味
-ここは読み違えやすいので重要です。
+~~~text
+x = r sin(theta)
+y = r (1 - cos(theta))
+z = 0
+~~~
 
-### `pos`
-`circle()` が返す `pos` は、開始点を原点とした「相対位置」です。  
-ただし軸の向きは機体前方基準ではなく、NED 基準です。
+速度:
 
-つまり:
-- 機体前方に何 m
-ではなく
-- 北に何 m、東に何 m
+~~~text
+vx = r w cos(theta)
+vy = r w sin(theta)
+vz = 0
+~~~
 
-を表しています。
+ここで **r = rad_xy_m**、**w = omega_radps** です。この円の中心は相対座標 **(0, +r)** です。
 
-### `vel`
-`vel` は、その相対軌道をなぞるための速度ベクトルです。  
-これも NED 基準です。
+## 第2円の数式
 
-## `test_start_location` との合成
-`update()` では、`circle()` が返した相対位置を開始時の絶対位置へ平行移動しています。
+第1円を1周すると、次の処理で **theta** を0付近へ戻し、円の向きを反転します。
 
-実際の送信は次の形です。
+~~~lua
+theta = theta - full_circle_rad
+circle_direction = -circle_direction
+~~~
 
-- `final_pos = test_start_location + target_pos`
-- `final_vel = target_vel`
+**circle_direction = -1** のときはY成分の符号だけが反転し、第2円になります。
 
-つまり、
-- `target_pos` は「開始点からのずれ」
-- `test_start_location` は「開始時の絶対位置」
-- その和が「EKF origin 基準の絶対目標位置」
+位置:
 
-という関係です。
+~~~text
+x = r sin(theta)
+y = -r (1 - cos(theta))
+z = 0
+~~~
 
-## 座標系の整理
-このスクリプトでは次の3つを分けて考えると理解しやすいです。
+速度:
 
-### 1. EKF origin 基準の NED 絶対座標
-例:
-- `test_start_location`
-- `set_target_posvel_NED()` に渡す最終位置
+~~~text
+vx = r w cos(theta)
+vy = -r w sin(theta)
+vz = 0
+~~~
 
-### 2. 開始点基準の相対座標
-例:
-- `circle()` が返す `pos`
+この円の中心は相対座標 **(0, -r)** です。
 
-### 3. 機体座標系
-前・右・下のような機首基準の座標系です。  
-このスクリプトでは使っていません。
+## 2円の接続
 
-## 機体座標系ではないことの意味
-このスクリプトは yaw を使って座標回転していません。  
-そのため、機体がどの向きで開始しても、8 の字の向きは機首基準では回らず、NED 基準で固定です。
+第1円の終了点と第2円の開始点は、どちらも次の状態です。
 
-たとえば:
-- 北向きで開始しても
-- 東向きで開始しても
+~~~text
+位置: (x, y) = (0, 0)
+速度: (vx, vy) = (r w, 0)
+~~~
 
-描く 8 の字は「世界座標上で同じ向き」です。
+そのため、接点で位置と速度は連続します。機体は接点で停止せず、そのまま第2円へ進みます。
+
+ただし、2円は反対方向へ曲がるため、接点で旋回加速度の向きが反転します。位置と速度は連続ですが、加速度までは連続ではありません。
+
+## 円周上の速度
+
+速度の大きさは次のようになります。
+
+~~~text
+speed
+= sqrt(vx^2 + vy^2)
+= sqrt((rw cos)^2 + (rw sin)^2)
+= rw
+~~~
+
+**w = target_speed_xy_mps / r** なので、
+
+~~~text
+speed = target_speed_xy_mps
+~~~
+
+です。現在の設定では全周で **1.0 m/s** になります。
+
+## update() の1ループ
+
+~~~mermaid
+flowchart TD
+    A["update()開始"] --> B["RC 6chを取得"]
+    B --> C{"PWMを取得できたか"}
+    C -- "No" --> D["1秒後に再実行"]
+    C -- "Yes" --> E{"アーム済み かつ PWM > 1500"}
+    E -- "Yes" --> F{"初回開始か"}
+    F -- "Yes" --> G["現在モードと開始位置を保存"]
+    G --> H["GUIDEDへ変更"]
+    F -- "No" --> I["figure8_target()を計算"]
+    H --> I
+    I --> K["絶対位置と速度をGuidedへ送信"]
+    K --> L["50 ms後に再実行"]
+    E -- "No" --> M{"実行中だったか"}
+    M -- "Yes" --> N["元モードへ復帰"]
+    M -- "No" --> O["状態をリセット"]
+    N --> O
+    O --> L
+~~~
+
+### 開始時
+
+1. RC 6chとアーム状態を確認する
+2. 現在モードを **return_mode_num** に保存する
+3. **set_start_location()** で開始地点を保存する
+4. **vehicle:set_mode(4)** でGUIDEDへ変更する
+5. **figure8_active = true** にする
+6. 最初の目標位置・速度を送信する
+
+### 実行中
+
+1. **figure8_target()** で相対位置・速度を生成する
+2. 相対位置へ **test_start_location** を加える
+3. **vehicle:set_target_posvel_NED()** で送信する
+4. 50 ms後に次のループを実行する
+
+### 停止時
+
+1. 元のflight modeへ戻す
+2. **figure8_active = false** にする
+3. 次回開始用に現在位置を取得する
+4. **theta = 0**、**circle_direction = 1** に戻す
+
+## 相対位置と絶対位置の合成
+
+**figure8_target()** が返す **target_pos** は開始地点を原点とする相対位置です。
+
+**update()** では次のように開始地点を加算します。
+
+~~~lua
+target_pos + test_start_location
+~~~
+
+~~~text
+最終目標位置 = 開始時のNED絶対位置 + 8の字の相対位置
+最終目標速度 = 8の字のNED速度
+~~~
+
+速度には開始位置を加えません。
+
+## 座標系
+
+このスクリプトが使う座標系はNEDです。
+
+| 軸 | 正方向 |
+|---|---|
+| X | North |
+| Y | East |
+| Z | Down |
+
+**figure8_target()** の相対位置もNED軸に沿っています。
+
+機体Yawによる座標回転は行っていないため、8の字の向きは機首方向ではなく世界座標に固定されます。
+
+## senkai.lua との関係
+
+**senkai.lua** の円軌道は次の式です。
+
+~~~text
+x = r sin(theta)
+y = r (1 - cos(theta))
+~~~
+
+**figure8_auto.lua** の第1円はこの式と同じです。第2円ではY成分の符号だけを反転し、反対側へ同じ円を配置しています。
+
+つまり現在の実装は、**senkai.lua** の円を接点で2つ連結した構成です。
 
 ## 他ファイルとの依存関係
-このファイルに `require` はありませんが、実行時には ArduPilot の Lua API と Copter Guided 制御に依存しています。
 
-### Lua API
-- `Vector3f`
-- `rc:get_pwm()`
-- `ahrs:get_relative_position_NED_origin()`
-- `vehicle:get_mode()`
-- `vehicle:set_mode()`
-- `vehicle:set_target_posvel_NED()`
-- `gcs:send_text()`
+### ArduPilot Lua API
 
-Lua API の定義やドキュメント:
-- `libraries/AP_Scripting/docs/docs.lua`
+- Vector3f
+- rc:get_pwm()
+- arming:is_armed()
+- ahrs:get_relative_position_NED_origin()
+- vehicle:get_mode()
+- vehicle:set_mode()
+- vehicle:set_target_posvel_NED()
+- gcs:send_text()
 
-### Copter 側の Guided 実装
-`vehicle:set_target_posvel_NED()` は Copter 本体の Guided 制御へつながっています。
+API定義:
 
-主な関連箇所:
-- `ArduCopter/Copter.cpp`
-- `ArduCopter/mode_guided.cpp`
+- libraries/AP_Scripting/docs/docs.lua
 
-### AHRS / EKF 側
-`ahrs:get_relative_position_NED_origin()` は、アクティブな EKF 実装から現在位置を取っています。
+### Copter Guided制御
 
-主な関連箇所:
-- `libraries/AP_AHRS/AP_AHRS.cpp`
+**vehicle:set_target_posvel_NED()** の送信先です。
 
-## 類似ファイルとの関係
-### `libraries/AP_Scripting/examples/set_target_posvel_circle.lua`
-公式の円軌道サンプルです。  
-`figure8_auto.lua` はこの系統に近く、円ではなく 8 の字へ拡張し、開始位置取得とモード復帰を強化した形と読めます。
+- ArduCopter/Copter.cpp
+- ArduCopter/mode_guided.cpp
 
-### `lua/archive/figure8_comp.lua`
-こちらも 8 の字ですが、考え方が違います。  
-`set_target_location()` で地点列を順番に踏ませる離散型で、`start_yaw` を使って前後左右を北東成分へ回しています。
+### AHRS / EKF
 
-対して `figure8_auto.lua` は:
-- 連続的に位置・速度を生成する
-- NED 基準で毎ループ指令を送る
+**get_relative_position_NED_origin()** の現在位置取得に関係します。
 
-という違いがあります。
+- libraries/AP_AHRS/AP_AHRS.cpp
 
 ## おすすめの読む順番
-1. 設定値と状態変数を見る
-2. `update()` を読んで、開始条件・停止条件・全体制御をつかむ
-3. `set_start_location()` を読んで、なぜ `Location` ではなく EKF origin/NED を使うか理解する
-4. `circle()` を読んで、8 の字の数式と速度生成を見る
-5. `set_target_posvel_circle.lua` を読んで元ネタとの差分を見る
-6. `ArduCopter/Copter.cpp` と `mode_guided.cpp` を読んで、Lua から送った指令が機体本体でどう処理されるか確認する
 
-## 読むときに注目するとよい変数
-- `circle_active`
-  - 実行中かどうか
-- `return_mode_num`
-  - 元モードの退避先
-- `test_start_location`
-  - 8 の字の原点
-- `time`
-  - ランプアップ用の時刻
-- `theta`
-  - 軌道上の位相
+1. 冒頭の設定値で軌道サイズ、速度、周期を確認する
+2. **update()** で開始・実行・停止の流れをつかむ
+3. **set_start_location()** で開始地点の座標系を確認する
+4. **figure8_target()** の第1円と第2円の切り替えを読む
+5. **senkai.lua** と円の式を比較する
+6. **Copter.cpp** と **mode_guided.cpp** で指令の送信先を確認する
 
 ## 注意点
-- 関数名 `circle()` とは裏腹に、実際は円ではなく 8 の字軌道
-- 冒頭コメントには円軌道の名残があり、そのまま信じると誤読しやすい
-- `HOVER_ALT_CM` は現状コード上で使われていない
-- `GUIDED` 前提なので、Copter 側が Guided 制御可能な状態でないと動作しない
-- 位置が取れない場合は `set_start_location()` が失敗し、開始できない
+
+- 2円の接点では位置と速度は連続するが、旋回加速度の向きは反転する
+- **set_target_posvel_NED()** では加速度目標を明示的に送っていない
+- **sampling_time_s** は要求周期であり、実際の経過時間を **millis()** で測定してはいない
+- 目標送信失敗時はGCSへ通知するだけで、軌道生成自体は継続する
+- 機体Yawを使っていないため、軌道の向きはNED基準で固定される
+- 高度条件の確認は行っていないため、安全な高度への離陸は操縦者が行う必要がある
+- 半径を小さくしたり速度を上げたりすると、必要な旋回加速度が増加する
+
+円軌道で必要な向心加速度は次の式です。
+
+~~~text
+acceleration = speed^2 / radius
+~~~
+
+現在の **1.0 m/s**、半径 **1.5 m** では約 **0.67 m/s^2** です。
 
 ## 要約
-`figure8_auto.lua` は、Copter を RC スイッチで `GUIDED` に切り替え、開始地点を基準にした 8 の字の相対軌道を EKF origin 基準の絶対 NED 座標へ変換して送り続ける Lua スクリプトです。
 
-処理の中心は `update()` で、軌道生成の中心は `circle()` です。  
-理解のポイントは、
-- `pos` は開始点基準の相対位置
-- `test_start_location` は開始時の絶対位置
-- `set_target_posvel_NED()` に渡すのは絶対 NED 位置と NED 速度
-という3点です。
+**figure8_auto.lua** は、RC 6chを使ってCopterをGUIDEDへ切り替え、開始地点を接点とする2つの円を連続して飛ばすスクリプトです。
+
+コードを理解するうえで重要なのは次の4点です。
+
+- **figure8_target()** は開始地点基準の相対位置とNED速度を生成する
+- 第1円と第2円はY成分の符号を反転して作る
+- 接点では位置と速度が一致する
+- **update()** が開始位置を加算して絶対NED目標として送信する
