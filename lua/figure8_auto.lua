@@ -28,9 +28,13 @@ local test_start_location = Vector3f()
 local return_mode_num = nil
 local circle_active = false
 local FIGURE_8_CH = 6
+local TWO_PI = 2 * math.pi
+-- phase: 1 = first circle, 2 = second circle (reversed turn), 3 = done
+local phase = 1
 
 gcs:send_text(0,"Script started")
-gcs:send_text(0,"Trajectory period: " .. tostring(2 * math.rad(180) / omega_radps))
+gcs:send_text(0,"Circle period (per turn): " .. tostring(TWO_PI / omega_radps))
+gcs:send_text(0,"Figure-8 = 2 circles (opposite turn direction)")
 
 local function restore_return_mode(reason)
     if return_mode_num == nil then
@@ -57,31 +61,50 @@ local function set_start_location()
     return true
 end
 
+-- Figure-8 built from two true circles of equal radius joined at the start
+-- point. The first circle (phase 1) turns one way, the second (phase 2)
+-- turns the opposite way. Both circles are tangent at the origin with
+-- continuous position (0,0) and velocity (R*f, 0), so the transition is
+-- smooth. Unlike a lemniscate, each lobe is a genuine radius-R circle with
+-- constant speed, giving symmetric tracking on both sides.
 function circle()
     local cur_freq
-    -- increase target speed lineary with time until ramp_up_time_s is reached
+    -- Ramp the speed up smoothly during the first turn only; the direction
+    -- switch is velocity-continuous, so no ramp is needed there.
     if time <= ramp_up_time_s then
         cur_freq = omega_radps*(time/ramp_up_time_s)^2
     else
         cur_freq = omega_radps
     end
 
-    -- calculate circle reference position and velocity
+    -- advance the parameter along the current circle
     theta = theta + cur_freq*sampling_time_s
+
+    -- one full turn (2*pi) completes a circle: switch direction, then finish
+    if phase == 1 and theta >= TWO_PI then
+        phase = 2
+        theta = theta - TWO_PI
+        gcs:send_text(6, "Figure8: switching turn direction")
+    elseif phase == 2 and theta >= TWO_PI then
+        phase = 3
+        theta = theta - TWO_PI
+        gcs:send_text(6, "Figure8: pattern complete")
+    end
+
+    -- second circle turns the opposite way (center mirrored across x axis)
+    local dir = (phase == 2) and -1.0 or 1.0
 
     local th_s = math.sin(theta)
     local th_c = math.cos(theta)
-    local th_2s = math.sin(2*theta)
-    local th_2c = math.cos(2*theta)
 
     local pos = Vector3f()
-    pos:x(2*rad_xy_m*th_s)
-    pos:y(rad_xy_m*th_2s)
+    pos:x(rad_xy_m*th_s)
+    pos:y(dir*rad_xy_m*(1 - th_c))
     pos:z(0)
 
     local vel = Vector3f()
-    vel:x(cur_freq*2*rad_xy_m*th_c)
-    vel:y(cur_freq*2*rad_xy_m*th_2c)
+    vel:x(cur_freq*rad_xy_m*th_c)
+    vel:y(dir*cur_freq*rad_xy_m*th_s)
     vel:z(0)
 
     return pos, vel
@@ -95,6 +118,16 @@ function update()
     end
 
     if arming:is_armed() and ch6_pwm > ch6_threshold then
+        if phase == 3 then
+            -- two circles done: restore the previous mode once and hold
+            -- until the pilot toggles the switch off (which resets state).
+            if circle_active then
+                restore_return_mode("Figure8: completed 2 circles. Restored previous mode")
+                circle_active = false
+            end
+            return update, sampling_time_s * 1000
+        end
+
         if not circle_active then
             return_mode_num = vehicle:get_mode()
             if not set_start_location() then
@@ -150,6 +183,7 @@ function update()
         -- reset some variable as soon as we are not in guided mode
         time = 0
         theta = 0
+        phase = 1
     end
 
     return update, sampling_time_s * 1000
